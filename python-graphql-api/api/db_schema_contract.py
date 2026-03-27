@@ -1,0 +1,250 @@
+"""
+Canonical list of PostgreSQL tables and columns referenced by raw SQL in:
+
+- ``api/rest/routes.py`` — admin/web REST API (prefix ``/api``)
+- ``api/mobile/routes.py`` — mobile API (prefix ``/mobile``)
+
+Run ``scripts/validate_api_db_schema.py`` against your DATABASE_URL to verify the live
+database includes these objects. GraphQL uses separate SQLAlchemy models and is not
+covered here.
+
+Column names match the queries (typically snake_case). If your DB uses different
+names, align the DB or update the queries and this contract together.
+"""
+
+from __future__ import annotations
+
+# --- Web REST (/api) — api/rest/routes.py ---
+API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
+    "users": frozenset(
+        {
+            "user_id",
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "user_type",
+            "loyalty_points",
+            "is_active",
+            "created_at",
+            "updated_at",
+            "password_hash",
+        }
+    ),
+    "technician_profiles": frozenset(
+        {
+            "technician_id",
+            "user_id",
+            "specialization",
+            "experience_years",
+            "bio",
+            "hourly_rate",
+            "certification",
+            "rating",
+            "total_reviews",
+            "status",
+            "created_at",
+        }
+    ),
+    "bookings": frozenset(
+        {
+            "booking_id",
+            "booking_number",
+            "customer_id",
+            "technician_id",
+            "service_address",
+            "status",
+            "subtotal",
+            "discount_amount",
+            "loyalty_points_used",
+            "loyalty_discount",
+            "total_amount",
+            "loyalty_points_earned",
+            "is_subscription_booking",
+            "customer_notes",
+            "created_at",
+            "updated_at",
+            "area_id",
+        }
+    ),
+    "service_areas": frozenset({"area_id", "zipcode", "city"}),
+    "services": frozenset(
+        {
+            "service_id",
+            "name",
+            "description",
+            "base_price",
+            "estimated_duration_mins",
+            "category",
+            "image_url",
+            "is_active",
+            "loyalty_points_earned",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "service_addons": frozenset(
+        {"addon_id", "service_id", "name", "description", "price", "is_active", "created_at"}
+    ),
+    "service_warranties": frozenset(
+        {
+            "warranty_id",
+            "service_id",
+            "name",
+            "description",
+            "duration_days",
+            "coverage_details",
+            "exclusions",
+            "is_active",
+            "created_at",
+        }
+    ),
+    "service_packages": frozenset(
+        {
+            "package_id",
+            "name",
+            "description",
+            "package_price",
+            "discount_percentage",
+            "image_url",
+            "is_active",
+            "loyalty_points_earned",
+            "valid_from",
+            "valid_until",
+            "created_at",
+        }
+    ),
+    "subscription_plans": frozenset(
+        {
+            "plan_id",
+            "name",
+            "description",
+            "billing_cycle",
+            "price",
+            "service_credits",
+            "discount_percentage",
+            "priority_booking",
+            "free_inspection",
+            "benefits",
+            "is_active",
+            "created_at",
+        }
+    ),
+    "user_subscriptions": frozenset(
+        {
+            "subscription_id",
+            "user_id",
+            "plan_id",
+            "start_date",
+            "end_date",
+            "next_billing_date",
+            "status",
+            "credits_remaining",
+            "credits_used",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "payments": frozenset(
+        {
+            "payment_id",
+            "booking_id",
+            "amount",
+            "payment_method",
+            "status",
+            "transaction_id",
+            "payment_date",
+            "created_at",
+        }
+    ),
+}
+
+# --- Mobile (/mobile) — api/mobile/routes.py ---
+API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
+    "users": frozenset(
+        {
+            "user_id",
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "user_type",
+            "loyalty_points",
+            "is_active",
+            "created_at",
+            "updated_at",
+            "password_hash",
+        }
+    ),
+    "services": frozenset(
+        {
+            "service_id",
+            "name",
+            "description",
+            "base_price",
+            "estimated_duration_mins",
+            "category",
+            "image_url",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "bookings": frozenset(
+        {
+            "booking_id",
+            "booking_number",
+            "customer_id",
+            "technician_id",
+            "service_address",
+            "status",
+            "subtotal",
+            "discount_amount",
+            "loyalty_points_used",
+            "loyalty_discount",
+            "total_amount",
+            "loyalty_points_earned",
+            "is_subscription_booking",
+            "customer_notes",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "mobile_otp_sessions": frozenset(
+        {"id", "phone", "otp_hash", "expires_at", "consumed", "created_at"}
+    ),
+    "customer_addresses": frozenset(
+        {
+            "id",
+            "user_id",
+            "label",
+            "line1",
+            "line2",
+            "city",
+            "state",
+            "zip_code",
+            "country",
+            "is_default",
+            "created_at",
+            "updated_at",
+        }
+    ),
+}
+
+
+def merged_api_table_columns() -> dict[str, frozenset[str]]:
+    """Union of REST + mobile required columns per table."""
+    out: dict[str, set[str]] = {}
+    for t, cols in API_REST_TABLE_COLUMNS.items():
+        out.setdefault(t, set()).update(cols)
+    for t, cols in API_MOBILE_TABLE_COLUMNS.items():
+        out.setdefault(t, set()).update(cols)
+    return {t: frozenset(c) for t, c in out.items()}
+
+
+def table_used_by(which: str, table: str) -> bool:
+    if which == "rest":
+        return table in API_REST_TABLE_COLUMNS
+    if which == "mobile":
+        return table in API_MOBILE_TABLE_COLUMNS
+    raise ValueError("which must be 'rest' or 'mobile'")
