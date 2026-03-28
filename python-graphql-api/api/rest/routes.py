@@ -1,9 +1,19 @@
+import os
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request, send_file
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 from api import db
+from api.booking_status import (
+    ASSIGNED_BOOKING_STATUS,
+    DEFAULT_BOOKING_STATUS,
+    OPEN_BOOKING_STATUSES,
+    PIPELINE_BOOKING_STATUSES,
+    sql_in_text,
+)
+from api.graphql.catalog_fallback import is_missing_relation_error
 
 
 rest_bp = Blueprint("rest_api", __name__, url_prefix="/api")
@@ -31,6 +41,35 @@ def _q(sql: str, params=None):
 
 def _one(sql: str, params=None):
     return db.session.execute(text(sql), params or {}).mappings().first()
+
+
+def _resolve_category_for_service_write(d: dict) -> tuple:
+    """
+    Pick (category_id, category_label) for services rows from JSON:
+    - categoryId: numeric id or, for legacy clients, category name string
+    - category: display name / fallback
+    """
+    cat_id_raw = d.get("categoryId") if "categoryId" in d else d.get("category_id")
+    cat_name_raw = d.get("category")
+    if cat_id_raw is not None and str(cat_id_raw).strip() != "":
+        s = str(cat_id_raw).strip()
+        if s.isdigit():
+            row = _one("SELECT id, name FROM categories WHERE id = :id", {"id": int(s)})
+            if row:
+                return row["id"], row["name"]
+        row = _one("SELECT id, name FROM categories WHERE name = :n", {"n": s})
+        if row:
+            return row["id"], row["name"]
+    if cat_name_raw is not None and str(cat_name_raw).strip() != "":
+        n = str(cat_name_raw).strip()
+        row = _one("SELECT id, name FROM categories WHERE name = :n", {"n": n})
+        if row:
+            return row["id"], row["name"]
+        return None, n
+    row = _one("SELECT id, name FROM categories WHERE name = 'General'", {})
+    if row:
+        return row["id"], row["name"]
+    return None, "General"
 
 
 @rest_bp.get("/customers")
@@ -411,6 +450,31 @@ def get_order(order_id: int):
 @rest_bp.post("/orders")
 def create_order():
     d = request.get_json(silent=True) or {}
+    raw_customer = d.get("customerId")
+    if raw_customer is None or (isinstance(raw_customer, str) and not str(raw_customer).strip()):
+        raw_customer = d.get("customer_id")
+    if raw_customer is None or (isinstance(raw_customer, str) and not str(raw_customer).strip()):
+        return jsonify(
+            {"message": "customerId is required (users.user_id). Send JSON key customerId or customer_id."}
+        ), 400
+    try:
+        customer_id = int(str(raw_customer).strip())
+    except (TypeError, ValueError):
+        return jsonify({"message": "customerId must be an integer"}), 400
+
+    if not _one("SELECT 1 AS ok FROM users WHERE user_id = :id", {"id": customer_id}):
+        return jsonify({"message": "customerId does not match an existing user"}), 404
+
+    raw_tech = d.get("technicianId")
+    if raw_tech is None or (isinstance(raw_tech, str) and not str(raw_tech).strip()):
+        raw_tech = d.get("technician_id")
+    technician_id = None
+    if raw_tech is not None and str(raw_tech).strip() != "":
+        try:
+            technician_id = int(str(raw_tech).strip())
+        except (TypeError, ValueError):
+            return jsonify({"message": "technicianId must be an integer"}), 400
+
     number = d.get("orderNo") or f"ORD-{int(datetime.utcnow().timestamp())}"
     row = _one(
         """
@@ -420,10 +484,34 @@ def create_order():
         VALUES (:n,:c,:t,:a,:s,:sub,:dis,:lp,:ld,:tot,:lpe,:isb,:cn,NOW(),NOW())
         RETURNING booking_id, booking_number, status, technician_id, total_amount, created_at, updated_at
         """,
-        {"n": number, "c": d.get("customerId"), "t": d.get("technicianId"), "a": d.get("address"), "s": d.get("status", "new"), "sub": d.get("subtotal", 0), "dis": d.get("discountAmount", 0), "lp": d.get("loyaltyPointsUsed", 0), "ld": 0, "tot": d.get("totalAmount", 0), "lpe": d.get("loyaltyPointsEarned", 0), "isb": d.get("isSubscriptionBooking", False), "cn": d.get("customerNotes")},
+        {
+            "n": number,
+            "c": customer_id,
+            "t": technician_id,
+            "a": d.get("address"),
+            "s": d.get("status") or DEFAULT_BOOKING_STATUS,
+            "sub": d.get("subtotal", 0),
+            "dis": d.get("discountAmount", 0),
+            "lp": d.get("loyaltyPointsUsed", 0),
+            "ld": 0,
+            "tot": d.get("totalAmount", 0),
+            "lpe": d.get("loyaltyPointsEarned", 0),
+            "isb": d.get("isSubscriptionBooking", False),
+            "cn": d.get("customerNotes"),
+        },
     )
     db.session.commit()
-    return jsonify({"id": str(row["booking_id"]), "orderNo": row["booking_number"], "status": row["status"]}), 201
+    return (
+        jsonify(
+            {
+                "message": "Customer request has been booked successfully",
+                "id": str(row["booking_id"]),
+                "orderNo": row["booking_number"],
+                "status": row["status"],
+            }
+        ),
+        201,
+    )
 
 
 @rest_bp.put("/orders/<int:order_id>")
@@ -444,7 +532,15 @@ def delete_order(order_id: int):
 @rest_bp.post("/orders/assign/<int:order_id>")
 def assign_order(order_id: int):
     d = request.get_json(silent=True) or {}
-    _q("UPDATE bookings SET technician_id=:t, status=CASE WHEN status IN ('new','open') THEN 'assigned' ELSE status END, updated_at=NOW() WHERE booking_id=:id", {"id": order_id, "t": d.get("technicianId")})
+    open_in = sql_in_text(OPEN_BOOKING_STATUSES)
+    _q(
+        f"""
+        UPDATE bookings SET technician_id=:t,
+            status=CASE WHEN status::text IN ({open_in}) THEN :assigned ELSE status END,
+            updated_at=NOW() WHERE booking_id=:id
+        """,
+        {"id": order_id, "t": d.get("technicianId"), "assigned": ASSIGNED_BOOKING_STATUS},
+    )
     db.session.commit()
     return get_order(order_id)
 
@@ -464,82 +560,218 @@ def list_services():
     search = request.args.get("search", "").strip()
     status = request.args.get("status")
     category = request.args.get("category")
-    rows = _q(
-        """
-        SELECT service_id, name, description, base_price, estimated_duration_mins, category, image_url, is_active, loyalty_points_earned, created_at, updated_at
-        FROM services
-        WHERE (:status IS NULL OR (:status='active' AND is_active=true) OR (:status='inactive' AND is_active=false))
-          AND (:category IS NULL OR category=:category)
-          AND (:search='' OR LOWER(name) LIKE LOWER(:like_search) OR LOWER(COALESCE(description,'')) LIKE LOWER(:like_search))
-        ORDER BY service_id DESC
-        """,
-        {"status": status, "category": category, "search": search, "like_search": f"%{search}%"},
-    )
-    mapped = [{"id": str(r["service_id"]), "name": r["name"], "description": r["description"] or "", "basePrice": float(r["base_price"] or 0), "estimatedDurationMins": r["estimated_duration_mins"] or 0, "category": r["category"], "categoryId": r["category"], "imageUrl": r["image_url"], "isActive": bool(r["is_active"]), "loyaltyPointsEarned": r["loyalty_points_earned"] or 0, "createdAt": r["created_at"].isoformat() if r["created_at"] else None, "updatedAt": r["updated_at"].isoformat() if r["updated_at"] else None} for r in rows]
+    try:
+        rows = _q(
+            """
+            SELECT s.service_id, s.name, s.description, s.base_price, s.estimated_duration_mins,
+                   COALESCE(cat.name, s.category) AS category,
+                   s.category_id, s.image_url, s.is_active, s.loyalty_points_earned, s.created_at, s.updated_at
+            FROM services s
+            LEFT JOIN categories cat ON cat.id = s.category_id
+            WHERE (:status IS NULL OR (:status='active' AND s.is_active=true) OR (:status='inactive' AND s.is_active=false))
+              AND (:category IS NULL OR COALESCE(cat.name, s.category) = :category
+                   OR (s.category_id IS NOT NULL AND CAST(s.category_id AS VARCHAR) = :category)
+                   OR s.category = :category)
+              AND (:search='' OR LOWER(s.name) LIKE LOWER(:like_search) OR LOWER(COALESCE(s.description,'')) LIKE LOWER(:like_search))
+            ORDER BY s.service_id DESC
+            """,
+            {"status": status, "category": category, "search": search, "like_search": f"%{search}%"},
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        rows = _q(
+            """
+            SELECT service_id, name, description, base_price, estimated_duration_mins, category,
+                   NULL::integer AS category_id, image_url, is_active, loyalty_points_earned, created_at, updated_at
+            FROM services
+            WHERE (:status IS NULL OR (:status='active' AND is_active=true) OR (:status='inactive' AND is_active=false))
+              AND (:category IS NULL OR category=:category)
+              AND (:search='' OR LOWER(name) LIKE LOWER(:like_search) OR LOWER(COALESCE(description,'')) LIKE LOWER(:like_search))
+            ORDER BY service_id DESC
+            """,
+            {"status": status, "category": category, "search": search, "like_search": f"%{search}%"},
+        )
+    mapped = [
+        {
+            "id": str(r["service_id"]),
+            "name": r["name"],
+            "description": r["description"] or "",
+            "basePrice": float(r["base_price"] or 0),
+            "estimatedDurationMins": r["estimated_duration_mins"] or 0,
+            "category": r["category"],
+            "categoryId": str(r["category_id"]) if r.get("category_id") is not None else (r["category"] or ""),
+            "imageUrl": r["image_url"],
+            "isActive": bool(r["is_active"]),
+            "loyaltyPointsEarned": r["loyalty_points_earned"] or 0,
+            "createdAt": r["created_at"].isoformat() if r["created_at"] else None,
+            "updatedAt": r["updated_at"].isoformat() if r["updated_at"] else None,
+        }
+        for r in rows
+    ]
     return jsonify(_paginate(mapped, page, limit))
 
 
 @rest_bp.get("/services/<int:service_id>")
 def get_service(service_id: int):
-    r = _one("SELECT * FROM services WHERE service_id=:id", {"id": service_id})
+    try:
+        r = _one(
+            """
+            SELECT s.service_id, s.name, s.description, s.base_price, s.estimated_duration_mins,
+                   s.category, s.category_id, s.image_url, s.is_active,
+                   COALESCE(cat.name, s.category) AS display_category
+            FROM services s
+            LEFT JOIN categories cat ON cat.id = s.category_id
+            WHERE s.service_id = :id
+            """,
+            {"id": service_id},
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        r = _one("SELECT * FROM services WHERE service_id=:id", {"id": service_id})
+        if r:
+            r = dict(r)
+            r["display_category"] = r.get("category")
     if not r:
         return jsonify({"message": "Service not found"}), 404
-    return jsonify({"id": str(r["service_id"]), "name": r["name"], "description": r["description"] or "", "basePrice": float(r["base_price"] or 0), "estimatedDurationMins": r["estimated_duration_mins"] or 0, "category": r["category"], "categoryId": r["category"], "isActive": bool(r["is_active"])})
+    disp = r.get("display_category") or r.get("category") or ""
+    cid = r.get("category_id")
+    return jsonify(
+        {
+            "id": str(r["service_id"]),
+            "name": r["name"],
+            "description": r["description"] or "",
+            "basePrice": float(r["base_price"] or 0),
+            "estimatedDurationMins": r["estimated_duration_mins"] or 0,
+            "category": disp,
+            "categoryId": str(cid) if cid is not None else disp,
+            "isActive": bool(r["is_active"]),
+        }
+    )
 
 
 @rest_bp.post("/services")
 def create_service():
     d = request.get_json(silent=True) or {}
-    row = _one(
-        """
-        INSERT INTO services (name, description, base_price, estimated_duration_mins, category, image_url, is_active, loyalty_points_earned, created_at, updated_at)
-        VALUES (:name,:description,:base_price,:duration,:category,:image_url,:is_active,:points,NOW(),NOW())
-        RETURNING service_id, name, description, base_price, estimated_duration_mins, category, is_active, created_at, updated_at
-        """,
-        {
-            "name": d.get("name", ""),
-            "description": d.get("description", ""),
-            "base_price": d.get("basePrice", 0),
-            "duration": d.get("estimatedDurationMins", 60),
-            "category": d.get("category") or d.get("categoryId") or "General",
-            "image_url": d.get("imageUrl"),
-            "is_active": d.get("isActive", True),
-            "points": d.get("loyaltyPointsEarned", 0),
-        },
-    )
+    try:
+        cid, cname = _resolve_category_for_service_write(d)
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            cid, cname = None, d.get("category") or d.get("categoryId") or "General"
+        else:
+            raise
+    params = {
+        "name": d.get("name", ""),
+        "description": d.get("description", ""),
+        "base_price": d.get("basePrice", 0),
+        "duration": d.get("estimatedDurationMins", 60),
+        "category": cname,
+        "category_id": cid,
+        "image_url": d.get("imageUrl"),
+        "is_active": d.get("isActive", True),
+        "points": d.get("loyaltyPointsEarned", 0),
+    }
+    try:
+        row = _one(
+            """
+            INSERT INTO services (name, description, base_price, estimated_duration_mins, category, category_id, image_url, is_active, loyalty_points_earned, created_at, updated_at)
+            VALUES (:name,:description,:base_price,:duration,:category,:category_id,:image_url,:is_active,:points,NOW(),NOW())
+            RETURNING service_id, name, description, base_price, estimated_duration_mins, category, category_id, is_active, created_at, updated_at
+            """,
+            params,
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        row = _one(
+            """
+            INSERT INTO services (name, description, base_price, estimated_duration_mins, category, image_url, is_active, loyalty_points_earned, created_at, updated_at)
+            VALUES (:name,:description,:base_price,:duration,:category,:image_url,:is_active,:points,NOW(),NOW())
+            RETURNING service_id, name, description, base_price, estimated_duration_mins, category, is_active, created_at, updated_at
+            """,
+            {k: v for k, v in params.items() if k != "category_id"},
+        )
     db.session.commit()
-    return jsonify({"id": str(row["service_id"]), "name": row["name"], "description": row["description"] or "", "basePrice": float(row["base_price"] or 0), "estimatedDurationMins": row["estimated_duration_mins"] or 0, "category": row["category"], "categoryId": row["category"], "isActive": bool(row["is_active"])}), 201
+    return jsonify(
+        {
+            "id": str(row["service_id"]),
+            "name": row["name"],
+            "description": row["description"] or "",
+            "basePrice": float(row["base_price"] or 0),
+            "estimatedDurationMins": row["estimated_duration_mins"] or 0,
+            "category": row["category"],
+            "categoryId": str(row["category_id"]) if row.get("category_id") is not None else row["category"],
+            "isActive": bool(row["is_active"]),
+        }
+    ), 201
 
 
 @rest_bp.put("/services/<int:service_id>")
 def update_service(service_id: int):
     d = request.get_json(silent=True) or {}
-    _q(
-        """
-        UPDATE services
-        SET name = COALESCE(:name, name),
-            description = COALESCE(:description, description),
-            base_price = COALESCE(:base_price, base_price),
-            estimated_duration_mins = COALESCE(:duration, estimated_duration_mins),
-            category = COALESCE(:category, category),
-            image_url = COALESCE(:image_url, image_url),
-            is_active = COALESCE(:is_active, is_active),
-            loyalty_points_earned = COALESCE(:points, loyalty_points_earned),
-            updated_at = NOW()
-        WHERE service_id=:id
-        """,
-        {
-            "id": service_id,
-            "name": d.get("name"),
-            "description": d.get("description"),
-            "base_price": d.get("basePrice"),
-            "duration": d.get("estimatedDurationMins"),
-            "category": d.get("category") or d.get("categoryId"),
-            "image_url": d.get("imageUrl"),
-            "is_active": d.get("isActive"),
-            "points": d.get("loyaltyPointsEarned"),
-        },
-    )
+    cid, cname = None, None
+    if any(k in d for k in ("category", "categoryId", "category_id")):
+        try:
+            cid, cname = _resolve_category_for_service_write(d)
+        except ProgrammingError as e:
+            if is_missing_relation_error(e):
+                cid, cname = None, d.get("category") or d.get("categoryId")
+            else:
+                raise
+    bind = {
+        "id": service_id,
+        "name": d.get("name"),
+        "description": d.get("description"),
+        "base_price": d.get("basePrice"),
+        "duration": d.get("estimatedDurationMins"),
+        "category": cname,
+        "category_id": cid,
+        "image_url": d.get("imageUrl"),
+        "is_active": d.get("isActive"),
+        "points": d.get("loyaltyPointsEarned"),
+    }
+    try:
+        db.session.execute(
+            text(
+                """
+                UPDATE services
+                SET name = COALESCE(:name, name),
+                    description = COALESCE(:description, description),
+                    base_price = COALESCE(:base_price, base_price),
+                    estimated_duration_mins = COALESCE(:duration, estimated_duration_mins),
+                    category = COALESCE(:category, category),
+                    category_id = COALESCE(:category_id, category_id),
+                    image_url = COALESCE(:image_url, image_url),
+                    is_active = COALESCE(:is_active, is_active),
+                    loyalty_points_earned = COALESCE(:points, loyalty_points_earned),
+                    updated_at = NOW()
+                WHERE service_id=:id
+                """
+            ),
+            bind,
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        db.session.execute(
+            text(
+                """
+                UPDATE services
+                SET name = COALESCE(:name, name),
+                    description = COALESCE(:description, description),
+                    base_price = COALESCE(:base_price, base_price),
+                    estimated_duration_mins = COALESCE(:duration, estimated_duration_mins),
+                    category = COALESCE(:category, category),
+                    image_url = COALESCE(:image_url, image_url),
+                    is_active = COALESCE(:is_active, is_active),
+                    loyalty_points_earned = COALESCE(:points, loyalty_points_earned),
+                    updated_at = NOW()
+                WHERE service_id=:id
+                """
+            ),
+            {k: v for k, v in bind.items() if k != "category_id"},
+        )
     db.session.commit()
     return get_service(service_id)
 
@@ -553,8 +785,108 @@ def delete_service(service_id: int):
 
 @rest_bp.get("/services/categories")
 def service_categories():
-    rows = _q("SELECT DISTINCT category FROM services WHERE category IS NOT NULL ORDER BY category")
-    return jsonify([{"id": r["category"], "name": r["category"], "description": "", "isActive": True, "enabledZipCodes": []} for r in rows])
+    try:
+        rows = _q(
+            """
+            SELECT id, name, COALESCE(description, '') AS description, is_active
+            FROM categories
+            WHERE is_active = true
+            ORDER BY name
+            """
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            rows = []
+        else:
+            raise
+    if rows:
+        try:
+            sub_rows = _q(
+                """
+                SELECT id, category_id, name, COALESCE(description, '') AS description, is_active
+                FROM sub_categories
+                WHERE is_active = true
+                ORDER BY category_id, name
+                """
+            )
+        except ProgrammingError as e:
+            if is_missing_relation_error(e):
+                sub_rows = []
+            else:
+                raise
+        by_parent: dict[int, list] = {}
+        for s in sub_rows:
+            by_parent.setdefault(s["category_id"], []).append(
+                {
+                    "id": str(s["id"]),
+                    "categoryId": str(s["category_id"]),
+                    "name": s["name"],
+                    "description": s["description"] or "",
+                    "isActive": bool(s["is_active"]),
+                }
+            )
+        return jsonify(
+            [
+                {
+                    "id": str(r["id"]),
+                    "name": r["name"],
+                    "description": r["description"] or "",
+                    "isActive": bool(r["is_active"]),
+                    "enabledZipCodes": [],
+                    "subCategories": by_parent.get(r["id"], []),
+                }
+                for r in rows
+            ]
+        )
+    legacy = _q("SELECT DISTINCT category AS name FROM services WHERE category IS NOT NULL ORDER BY category")
+    return jsonify(
+        [
+            {
+                "id": r["name"],
+                "name": r["name"],
+                "description": "",
+                "isActive": True,
+                "enabledZipCodes": [],
+                "subCategories": [],
+            }
+            for r in legacy
+        ]
+    )
+
+
+@rest_bp.get("/catalog/subcategories")
+def catalog_subcategories():
+    """Subcategories for a parent category: ?categoryId=<int> (required)."""
+    raw = request.args.get("categoryId") or request.args.get("category_id")
+    if not raw or not str(raw).strip().isdigit():
+        return jsonify({"message": "categoryId is required"}), 400
+    cid = int(raw)
+    try:
+        rows = _q(
+            """
+            SELECT id, category_id, name, COALESCE(description, '') AS description, is_active
+            FROM sub_categories
+            WHERE category_id = :cid AND is_active = true
+            ORDER BY name
+            """,
+            {"cid": cid},
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify([])
+        raise
+    return jsonify(
+        [
+            {
+                "id": str(r["id"]),
+                "categoryId": str(r["category_id"]),
+                "name": r["name"],
+                "description": r["description"] or "",
+                "isActive": bool(r["is_active"]),
+            }
+            for r in rows
+        ]
+    )
 
 
 @rest_bp.get("/services/addons")
@@ -710,8 +1042,17 @@ def enum_specializations():
 
 @rest_bp.get("/enumerations/service-categories")
 def enum_service_categories():
-    rows = _q("SELECT DISTINCT category FROM services WHERE category IS NOT NULL ORDER BY category")
-    return jsonify([{"value": r["category"], "label": r["category"]} for r in rows])
+    try:
+        rows = _q("SELECT id, name FROM categories WHERE is_active = true ORDER BY name")
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            rows = []
+        else:
+            raise
+    if rows:
+        return jsonify([{"value": str(r["id"]), "label": r["name"]} for r in rows])
+    legacy = _q("SELECT DISTINCT category AS name FROM services WHERE category IS NOT NULL ORDER BY category")
+    return jsonify([{"value": r["name"], "label": r["name"]} for r in legacy])
 
 
 @rest_bp.get("/enumerations/zip-codes")
@@ -726,7 +1067,8 @@ def dashboard_stats():
     t = _one("SELECT COUNT(*) AS c FROM technician_profiles")["c"]
     at = _one("SELECT COUNT(*) AS c FROM technician_profiles WHERE status='available'")["c"]
     o = _one("SELECT COUNT(*) AS c FROM bookings")["c"]
-    po = _one("SELECT COUNT(*) AS c FROM bookings WHERE status IN ('new','under_review','assigned','in_progress')")["c"]
+    pipe_in = sql_in_text(PIPELINE_BOOKING_STATUSES)
+    po = _one(f"SELECT COUNT(*) AS c FROM bookings WHERE status::text IN ({pipe_in})")["c"]
     esc = _one("SELECT COUNT(*) AS c FROM bookings WHERE status='escalated'")["c"]
     rev = float(_one("SELECT COALESCE(SUM(amount),0) AS c FROM payments WHERE status='completed'")["c"] or 0)
     asub = _one("SELECT COUNT(*) AS c FROM user_subscriptions WHERE status='active'")["c"]
@@ -872,3 +1214,42 @@ def settings_roles():
             {"id": "role-5", "role": "technician_supervisor", "label": "Technician Supervisor", "description": "Technician oversight", "permissions": []},
         ]
     )
+
+
+_REST_DIR = os.path.dirname(os.path.abspath(__file__))
+_OPENAPI_PATH = os.path.join(_REST_DIR, "openapi.yaml")
+
+_SWAGGER_UI_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Zepnest REST API — Swagger UI</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css" crossorigin="anonymous" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js" crossorigin="anonymous"></script>
+  <script>
+    window.onload = function () {
+      SwaggerUIBundle({
+        url: "/api/openapi.yaml",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis],
+      });
+    };
+  </script>
+</body>
+</html>"""
+
+
+@rest_bp.get("/docs")
+def swagger_ui():
+    """Interactive OpenAPI (Swagger UI) for this REST blueprint."""
+    return Response(_SWAGGER_UI_HTML, mimetype="text/html; charset=utf-8")
+
+
+@rest_bp.get("/openapi.yaml")
+def serve_openapi_yaml():
+    """OpenAPI 3.0 document (YAML) for `/api/*` routes."""
+    return send_file(_OPENAPI_PATH, mimetype="application/yaml", max_age=3600)

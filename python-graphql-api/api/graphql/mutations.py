@@ -2,6 +2,11 @@ from datetime import datetime
 
 import graphene
 from api import db
+from api.booking_status import (
+    ASSIGNED_BOOKING_STATUS,
+    DEFAULT_BOOKING_STATUS,
+    OPEN_BOOKING_STATUSES,
+)
 from api.models.user import User as UserModel
 from api.models.post import Post as PostModel
 from api.models.technician import Technician as TechnicianModel
@@ -682,7 +687,7 @@ class CreateTicket(graphene.Mutation):
                 booking_number=ticket_number,
                 customer_id=user.user_id,
                 customer_notes=note,
-                status="new",
+                status=DEFAULT_BOOKING_STATUS,
                 subtotal=0,
                 discount_amount=0,
                 total_amount=0,
@@ -749,8 +754,8 @@ class AssignTechnicianToOrder(graphene.Mutation):
                 return AssignTechnicianToOrder(ticket=None, success=False, message="Order not found")
 
             ticket.technician_id = technician_id
-            if ticket.status in ("open", "new"):
-                ticket.status = "assigned"
+            if ticket.status in OPEN_BOOKING_STATUSES:
+                ticket.status = ASSIGNED_BOOKING_STATUS
             db.session.commit()
             return AssignTechnicianToOrder(ticket=ticket, success=True, message="Technician assigned successfully")
         except Exception as e:
@@ -870,7 +875,7 @@ class CreateServiceBooking(graphene.Mutation):
                 booking_number=booking_number,
                 customer_id=uid,
                 customer_notes=note,
-                status="new",
+                status=DEFAULT_BOOKING_STATUS,
                 subtotal=tot,
                 total_amount=tot,
                 discount_amount=0,

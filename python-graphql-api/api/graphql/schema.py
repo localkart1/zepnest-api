@@ -1,6 +1,7 @@
 import graphene
 from flask import Blueprint, request, jsonify
 from sqlalchemy import or_
+from sqlalchemy.exc import ProgrammingError
 
 from api.models.user import User as UserModel
 from api.models.post import Post as PostModel
@@ -16,6 +17,14 @@ from api.graphql.types import (
     PriceMappingType, SubscriptionPlanType, AMCPlanType, SubscriptionType, AMCSubscriptionType,
     AssetType, AssetRegistryType, WarrantyTrackingType, AssetServiceMappingType, ServiceBookingType,
     EscalationType, ComplianceRecordType, PaginatedTechnicianType, PaginatedAssetType, PaginatedOrderType
+)
+from api.graphql.catalog_fallback import (
+    category_from_services_by_graphql_id,
+    is_missing_relation_error,
+    run_or_empty_list,
+    run_or_none_price_mapping,
+    run_or_none_subcategory,
+    run_or_services_categories,
 )
 from api.graphql.mutations import (
     CreateUser, UpdateUser, DeleteUser, CreatePost,
@@ -191,28 +200,36 @@ class Query(graphene.ObjectType):
         return TechnicianModel.query.filter_by(specialization=specialization).all()
 
     def resolve_categories(self, info):
-        return CategoryModel.query.all()
+        return run_or_services_categories(lambda: CategoryModel.query.all())
 
     def resolve_category(self, info, id):
-        return CategoryModel.query.get(id)
+        try:
+            row = CategoryModel.query.get(id)
+        except ProgrammingError as e:
+            if is_missing_relation_error(e):
+                return category_from_services_by_graphql_id(id)
+            raise
+        if row is not None:
+            return row
+        return category_from_services_by_graphql_id(id)
 
     def resolve_sub_categories(self, info):
-        return SubCategoryModel.query.all()
+        return run_or_empty_list(lambda: SubCategoryModel.query.all())
 
     def resolve_sub_categories_by_category(self, info, category_id):
-        return SubCategoryModel.query.filter_by(category_id=category_id).all()
+        return run_or_empty_list(lambda: SubCategoryModel.query.filter_by(category_id=category_id).all())
 
     def resolve_sub_category(self, info, id):
-        return SubCategoryModel.query.get(id)
+        return run_or_none_subcategory(lambda: SubCategoryModel.query.get(id), id)
 
     def resolve_price_mappings(self, info):
-        return PriceMappingModel.query.all()
+        return run_or_empty_list(lambda: PriceMappingModel.query.all())
 
     def resolve_price_mappings_by_category(self, info, category_id):
-        return PriceMappingModel.query.filter_by(category_id=category_id).all()
+        return run_or_empty_list(lambda: PriceMappingModel.query.filter_by(category_id=category_id).all())
 
     def resolve_price_mapping(self, info, id):
-        return PriceMappingModel.query.get(id)
+        return run_or_none_price_mapping(lambda: PriceMappingModel.query.get(id), id)
 
     def resolve_subscription_plans(self, info):
         return SubscriptionPlanModel.query.all()

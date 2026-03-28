@@ -103,7 +103,16 @@ class CategoryType(graphene.ObjectType):
     sub_categories = graphene.List(lambda: SubCategoryType)
 
     def resolve_sub_categories(self, info):
-        return self.sub_categories
+        cid = getattr(self, "id", None)
+        if cid is None:
+            return []
+        from api.models.service_catalog import SubCategory as SubCategoryModel
+
+        return (
+            SubCategoryModel.query.filter_by(category_id=cid, is_active=True)
+            .order_by(SubCategoryModel.name)
+            .all()
+        )
 
 # SubCategory Type
 class SubCategoryType(graphene.ObjectType):

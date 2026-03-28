@@ -13,5 +13,8 @@ if __name__ == '__main__':
 
     print(f"Starting API server on http://localhost:{port}")
     print(f"GraphQL IDE: http://localhost:{port}/graphql")
+    print(f"REST Swagger UI: http://localhost:{port}/api/docs")
+    print(f"OpenAPI YAML (web only): http://localhost:{port}/api/openapi.yaml")
+    print(f"OpenAPI JSON (web + mobile): http://localhost:{port}/openapi.json")
 
     app.run(host='0.0.0.0', port=port, debug=debug)

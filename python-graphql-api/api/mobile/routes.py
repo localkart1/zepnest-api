@@ -22,10 +22,14 @@ import jwt
 from jwt.exceptions import InvalidTokenError
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 from api import db
+from api.booking_status import DEFAULT_BOOKING_STATUS
+from api.graphql.catalog_fallback import is_missing_relation_error
 from api.models.mobile_otp import MobileOtpSession
 from api import s3_config
+from api.mobile.two_factor_sms import format_phone_for_2factor, send_otp_sms
 
 mobile_bp = Blueprint("mobile_api", __name__, url_prefix="/mobile")
 
@@ -33,6 +37,13 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-key")
 OTP_TTL_SECONDS = int(os.getenv("MOBILE_OTP_TTL_SECONDS", "300"))
 JWT_EXPIRES_HOURS = int(os.getenv("MOBILE_JWT_EXPIRES_HOURS", "168"))
 MOBILE_OTP_DEBUG = os.getenv("MOBILE_OTP_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+SMS_2FACTOR_API_KEY = os.getenv("SMS_2FACTOR_API_KEY", "").strip()
+SMS_2FACTOR_ENABLED = os.getenv("SMS_2FACTOR_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 MOBILE_JSON_PREFIX = "[mobile-json]"
 
@@ -43,6 +54,11 @@ def _q(sql: str, params=None):
 
 def _one(sql: str, params=None):
     return db.session.execute(text(sql), params or {}).mappings().first()
+
+
+def _exec(sql: str, params=None) -> None:
+    """Run INSERT/UPDATE/DELETE with no row result (SQLAlchemy 2 ``CursorResult`` is not iterable as mappings)."""
+    db.session.execute(text(sql), params or {})
 
 
 def normalize_phone(phone: str | None) -> str | None:
@@ -272,7 +288,7 @@ def request_otp():
 
     otp = f"{secrets.randbelow(900000) + 100000}"
     expires_at = datetime.utcnow() + timedelta(seconds=OTP_TTL_SECONDS)
-    _q(
+    _exec(
         "UPDATE mobile_otp_sessions SET consumed = true WHERE phone = :phone AND consumed = false",
         {"phone": phone},
     )
@@ -285,11 +301,37 @@ def request_otp():
     db.session.add(sess)
     db.session.commit()
 
+    sid = sess.id
+    sms_sent = False
+    send_sms = bool(SMS_2FACTOR_API_KEY and SMS_2FACTOR_ENABLED)
+    if send_sms:
+        phone_2f = format_phone_for_2factor(phone)
+        ok, sms_err = send_otp_sms(SMS_2FACTOR_API_KEY, phone_2f, otp)
+        if not ok:
+            MobileOtpSession.query.filter_by(id=sid).delete()
+            db.session.commit()
+            return (
+                jsonify(
+                    {
+                        "message": "Failed to send OTP via SMS",
+                        "detail": sms_err,
+                    }
+                ),
+                502,
+            )
+        sms_sent = True
+
     body = {
-        "message": "OTP sent",
+        "message": "OTP sent" if sms_sent else "OTP generated",
         "expiresInSeconds": OTP_TTL_SECONDS,
         "phone": phone,
+        "smsSent": sms_sent,
     }
+    if not send_sms:
+        if not SMS_2FACTOR_API_KEY:
+            body["smsSkipReason"] = "SMS_2FACTOR_API_KEY is empty; set it in .env (not only .env.example) and restart."
+        elif not SMS_2FACTOR_ENABLED:
+            body["smsSkipReason"] = "SMS_2FACTOR_ENABLED is false."
     if MOBILE_OTP_DEBUG:
         body["debugOtp"] = otp
     return jsonify(body), 200
@@ -320,7 +362,7 @@ def verify_otp():
     if row["otp_hash"] != _otp_hash(phone, otp):
         return jsonify({"message": "Invalid OTP"}), 401
 
-    _one(
+    _exec(
         "UPDATE mobile_otp_sessions SET consumed = true WHERE id = :id",
         {"id": row["id"]},
     )
@@ -330,7 +372,7 @@ def verify_otp():
     ln = (data.get("lastName") or "").strip()
     user = _get_or_create_customer(phone, fn, ln)
     if fn or ln:
-        _q(
+        _exec(
             """
             UPDATE users SET first_name = COALESCE(NULLIF(:fn,''), first_name),
                 last_name = COALESCE(NULLIF(:ln,''), last_name), updated_at = NOW()
@@ -357,8 +399,7 @@ def verify_otp():
     ), 200
 
 
-@mobile_bp.get("/home")
-def mobile_home():
+def _mobile_home_legacy_no_catalog_tables():
     cat_rows = _q(
         """
         SELECT DISTINCT category AS name
@@ -392,14 +433,138 @@ def mobile_home():
     categories = []
     for r in cat_rows:
         name = r["name"]
-        categories.append(
-            {
-                "id": name,
-                "name": name,
-                "services": by_cat.get(name, [])[:12],
-            }
-        )
+        categories.append({"id": name, "name": name, "services": by_cat.get(name, [])[:12]})
     return jsonify({"categories": categories}), 200
+
+
+@mobile_bp.get("/home")
+def mobile_home():
+    """
+    Home categories: uses ``categories`` + ``services.category_id`` when the schema is migrated;
+    otherwise falls back to distinct ``services.category`` strings.
+    """
+    try:
+        svc_rows = _q(
+            """
+            SELECT s.service_id, s.name, s.description, s.base_price, s.estimated_duration_mins,
+                   COALESCE(cat.name, NULLIF(TRIM(s.category), ''), 'General') AS cat_key,
+                   s.image_url
+            FROM services s
+            LEFT JOIN categories cat ON cat.id = s.category_id
+            WHERE s.is_active = true
+            ORDER BY cat_key NULLS LAST, s.service_id DESC
+            """
+        )
+        services_by_name: dict[str, list] = {}
+        for r in svc_rows:
+            key = r["cat_key"]
+            services_by_name.setdefault(key, []).append(
+                {
+                    "id": str(r["service_id"]),
+                    "name": r["name"],
+                    "description": r["description"] or "",
+                    "basePrice": float(r["base_price"] or 0),
+                    "estimatedDurationMins": r["estimated_duration_mins"] or 0,
+                    "category": key,
+                    "imageUrl": r["image_url"],
+                }
+            )
+
+        cat_rows = _q(
+            """
+            SELECT id, name
+            FROM categories
+            WHERE is_active = true
+            ORDER BY name
+            """
+        )
+        try:
+            sub_rows = _q(
+                """
+                SELECT id, category_id, name, COALESCE(description, '') AS description, is_active
+                FROM sub_categories
+                WHERE is_active = true
+                ORDER BY category_id, name
+                """
+            )
+        except ProgrammingError as e:
+            if is_missing_relation_error(e):
+                sub_rows = []
+            else:
+                raise
+        by_parent: dict[int, list] = {}
+        for s in sub_rows:
+            by_parent.setdefault(s["category_id"], []).append(
+                {
+                    "id": str(s["id"]),
+                    "categoryId": str(s["category_id"]),
+                    "name": s["name"],
+                    "description": s["description"] or "",
+                    "isActive": bool(s["is_active"]),
+                }
+            )
+        categories = []
+        if cat_rows:
+            for cr in cat_rows:
+                cname = cr["name"]
+                categories.append(
+                    {
+                        "id": str(cr["id"]),
+                        "name": cname,
+                        "services": services_by_name.get(cname, [])[:12],
+                        "subCategories": by_parent.get(cr["id"], []),
+                    }
+                )
+        else:
+            for key in sorted(services_by_name.keys()):
+                categories.append(
+                    {
+                        "id": key,
+                        "name": key,
+                        "services": services_by_name[key][:12],
+                        "subCategories": [],
+                    }
+                )
+        return jsonify({"categories": categories}), 200
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return _mobile_home_legacy_no_catalog_tables()
+        raise
+
+
+@mobile_bp.get("/catalog/subcategories")
+def mobile_catalog_subcategories():
+    """Query params: categoryId (required). Returns [] if sub_categories table is missing."""
+    raw = request.args.get("categoryId") or request.args.get("category_id")
+    if not raw or not str(raw).strip().isdigit():
+        return jsonify({"message": "categoryId is required"}), 400
+    cid = int(raw)
+    try:
+        rows = _q(
+            """
+            SELECT id, category_id, name, COALESCE(description, '') AS description, is_active
+            FROM sub_categories
+            WHERE category_id = :cid AND is_active = true
+            ORDER BY name
+            """,
+            {"cid": cid},
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify([])
+        raise
+    return jsonify(
+        [
+            {
+                "id": str(r["id"]),
+                "categoryId": str(r["category_id"]),
+                "name": r["name"],
+                "description": r["description"] or "",
+                "isActive": bool(r["is_active"]),
+            }
+            for r in rows
+        ]
+    )
 
 
 @mobile_bp.post("/bookings")
@@ -448,10 +613,10 @@ def create_mobile_booking():
         INSERT INTO bookings (booking_number, customer_id, technician_id, service_address, status, subtotal, discount_amount,
             loyalty_points_used, loyalty_discount, total_amount, loyalty_points_earned, is_subscription_booking,
             customer_notes, created_at, updated_at)
-        VALUES (:n, :c, NULL, :a, 'new', :sub, 0, 0, 0, :tot, 0, false, :cn, NOW(), NOW())
+        VALUES (:n, :c, NULL, :a, :st, :sub, 0, 0, 0, :tot, 0, false, :cn, NOW(), NOW())
         RETURNING booking_id, booking_number, status, total_amount, service_address, customer_notes, created_at, updated_at
         """,
-        {"n": number, "c": g.mobile_user_id, "a": address, "sub": total, "tot": total, "cn": notes_text},
+        {"n": number, "c": g.mobile_user_id, "a": address, "st": DEFAULT_BOOKING_STATUS, "sub": total, "tot": total, "cn": notes_text},
     )
     db.session.commit()
     rdict = dict(row)
@@ -581,7 +746,7 @@ def patch_profile():
     fn = data.get("firstName")
     ln = data.get("lastName")
     email = data.get("email")
-    _q(
+    _exec(
         """
         UPDATE users SET
             first_name = COALESCE(:fn, first_name),
@@ -618,7 +783,7 @@ def create_address():
         return jsonify({"message": "line1 is required"}), 400
     is_def = bool(data.get("isDefault"))
     if is_def:
-        _q("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
+        _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
     row = _one(
         """
         INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
@@ -654,12 +819,12 @@ def update_address(address_id: int):
     data = request.get_json(silent=True) or {}
     is_def = data.get("isDefault")
     if is_def is True:
-        _q(
+        _exec(
             "UPDATE customer_addresses SET is_default = false WHERE user_id = :uid AND id != :aid",
             {"uid": g.mobile_user_id, "aid": address_id},
         )
 
-    _q(
+    _exec(
         """
         UPDATE customer_addresses SET
             label = COALESCE(:label, label),

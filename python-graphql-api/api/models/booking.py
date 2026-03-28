@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from api import db
+from api.booking_status import DEFAULT_BOOKING_STATUS
 
 
 class Booking(db.Model):
@@ -17,7 +18,7 @@ class Booking(db.Model):
     customer_id = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=True)
     technician_id = db.Column(db.Integer, db.ForeignKey("technician_profiles.technician_id"), nullable=True)
     service_address = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(50), nullable=True, default="new")
+    status = db.Column(db.String(50), nullable=True, default=DEFAULT_BOOKING_STATUS)
     subtotal = db.Column(db.Float, nullable=True, default=0)
     discount_amount = db.Column(db.Float, nullable=True, default=0)
     loyalty_points_used = db.Column(db.Integer, nullable=True, default=0)

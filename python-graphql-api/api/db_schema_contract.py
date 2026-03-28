@@ -68,6 +68,44 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "service_areas": frozenset({"area_id", "zipcode", "city"}),
+    "categories": frozenset(
+        {
+            "id",
+            "name",
+            "description",
+            "icon",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "sub_categories": frozenset(
+        {
+            "id",
+            "category_id",
+            "name",
+            "description",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "price_mappings": frozenset(
+        {
+            "id",
+            "category_id",
+            "sub_category_id",
+            "service_name",
+            "service_type",
+            "base_price",
+            "gst_percentage",
+            "total_price",
+            "unit",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "services": frozenset(
         {
             "service_id",
@@ -76,6 +114,7 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "base_price",
             "estimated_duration_mins",
             "category",
+            "category_id",
             "image_url",
             "is_active",
             "loyalty_points_earned",
@@ -176,6 +215,28 @@ API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "password_hash",
         }
     ),
+    "categories": frozenset(
+        {
+            "id",
+            "name",
+            "description",
+            "icon",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "sub_categories": frozenset(
+        {
+            "id",
+            "category_id",
+            "name",
+            "description",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "services": frozenset(
         {
             "service_id",
@@ -184,6 +245,7 @@ API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "base_price",
             "estimated_duration_mins",
             "category",
+            "category_id",
             "image_url",
             "is_active",
             "created_at",

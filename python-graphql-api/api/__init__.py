@@ -1,6 +1,7 @@
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 import os
+
+from flask import Flask, jsonify, send_file
+from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -80,5 +81,21 @@ def create_app():
 
         from api.mobile.routes import mobile_bp
         app.register_blueprint(mobile_bp)
+
+        _openapi_json = os.path.join(os.path.dirname(os.path.dirname(__file__)), "openapi.json")
+
+        @app.get("/openapi.json")
+        def serve_openapi_json():
+            """Combined OpenAPI 3 spec (web `/api` + mobile `/mobile`) for Postman / Swagger import."""
+            if not os.path.isfile(_openapi_json):
+                return (
+                    jsonify(
+                        {
+                            "message": "openapi.json not found. Run: python scripts/build_openapi_json.py",
+                        }
+                    ),
+                    404,
+                )
+            return send_file(_openapi_json, mimetype="application/json", max_age=300)
 
     return app

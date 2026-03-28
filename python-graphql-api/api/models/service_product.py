@@ -13,6 +13,7 @@ class Service(db.Model):
     description = db.Column(db.Text, nullable=True)
     base_price = db.Column(db.Float, nullable=True, default=0)
     estimated_duration_mins = db.Column(db.Integer, nullable=True)
+    category_id = db.Column(db.Integer, db.ForeignKey("categories.id"), nullable=True)
     category = db.Column(db.String(120), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
