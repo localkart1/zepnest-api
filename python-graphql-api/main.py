@@ -12,6 +12,7 @@ if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'True') == 'True'
 
     print(f"Starting API server on http://localhost:{port}")
+    print(f"Web auth (email/password): POST http://localhost:{port}/api/auth/login | /api/auth/register")
     print(f"GraphQL IDE: http://localhost:{port}/graphql")
     print(f"REST Swagger UI: http://localhost:{port}/api/docs")
     print(f"OpenAPI YAML (web only): http://localhost:{port}/api/openapi.yaml")

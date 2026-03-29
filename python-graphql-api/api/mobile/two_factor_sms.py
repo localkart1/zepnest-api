@@ -1,8 +1,12 @@
 """
 Send OTP SMS via 2Factor.in (https://2factor.in).
 
-Uses POST https://2factor.in/API/V1/{api_key}/SMS/{phone}/{otp}
+Uses POST https://2factor.in/API/V1/{api_key}/SMS/{phone}/{otp}[/template_name]
 Documented at: https://2factor.in/API/DOCS/SMS_OTP.html
+
+Voice OTP is a different API path (/VOICE/...); see https://2factor.in/API/DOCS/VOICE_OTP.html
+This module never calls VOICE. If users receive a voice call instead of SMS, check the 2Factor.in
+dashboard (SMS vs voice service, DLT SMS template, wallet) and that SMS_2FACTOR_API_KEY is the SMS key.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -46,8 +51,14 @@ def send_otp_sms(
     if timeout is None:
         timeout = float(os.getenv("SMS_2FACTOR_TIMEOUT_SECONDS", "15"))
 
-    # Path segments: API docs use raw POST URL; keep digits-only phone and numeric OTP.
-    url = f"https://2factor.in/API/V1/{api_key}/SMS/{phone_for_provider}/{otp}"
+    # Path segments: optional template name for custom DLT templates (see 2Factor OTP template docs).
+    template = (os.getenv("SMS_2FACTOR_TEMPLATE_NAME") or "").strip()
+    base = f"https://2factor.in/API/V1/{api_key}/SMS/{phone_for_provider}/{otp}"
+    url = (
+        f"{base}/{urllib.parse.quote(template, safe='')}"
+        if template
+        else base
+    )
     req = urllib.request.Request(
         url,
         method="POST",

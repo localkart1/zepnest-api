@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from werkzeug.security import check_password_hash, generate_password_hash
+
 from api import db
 
 
@@ -24,6 +26,15 @@ class User(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     posts = db.relationship("Post", backref="author", lazy=True)
+
+    def set_password(self, raw_password: str) -> None:
+        """Store a Werkzeug password hash (pbkdf2/scrypt per Werkzeug defaults)."""
+        self.password_hash = generate_password_hash(raw_password)
+
+    def check_password(self, raw_password: str) -> bool:
+        if not self.password_hash:
+            return False
+        return check_password_hash(self.password_hash, raw_password)
 
     def __repr__(self):
         return f"<User {self.user_id} {self.email}>"

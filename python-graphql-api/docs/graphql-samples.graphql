@@ -1,0 +1,1368 @@
+# =============================================================================
+# Zepnest API — sample GraphQL operations (matches api/graphql/schema.py)
+# POST http://localhost:<PORT>/graphql  Content-Type: application/json
+# Body: { "query": "...", "variables": { ... } }
+# Field names are camelCase (Graphene).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# INTROSPECTION (optional — GraphiQL does this automatically)
+# ---------------------------------------------------------------------------
+
+query SchemaOverview {
+  __schema {
+    queryType { name }
+    mutationType { name }
+  }
+}
+
+query ListQueryFields {
+  __type(name: "Query") {
+    fields {
+      name
+      args {
+        name
+        type {
+          name
+          kind
+          ofType {
+            name
+            kind
+          }
+        }
+      }
+    }
+  }
+}
+
+query ListMutationFields {
+  __type(name: "Mutation") {
+    fields {
+      name
+      args {
+        name
+        type {
+          name
+          kind
+          ofType {
+            name
+            kind
+          }
+        }
+      }
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# USERS & POSTS
+# ---------------------------------------------------------------------------
+
+query Users {
+  users {
+    id
+    userId
+    firstName
+    lastName
+    name
+    email
+    phone
+    userType
+    loyaltyPoints
+    isActive
+    createdAt
+    updatedAt
+  }
+}
+
+query User($id: Int!) {
+  user(id: $id) {
+    id
+    firstName
+    lastName
+    email
+    phone
+    posts {
+      id
+      title
+    }
+  }
+}
+
+query Posts {
+  posts {
+    id
+    title
+    content
+    userId
+    createdAt
+  }
+}
+
+query Post($id: Int!) {
+  post(id: $id) {
+    id
+    title
+    content
+    author {
+      id
+      email
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# TECHNICIANS
+# ---------------------------------------------------------------------------
+
+query Technicians {
+  technicians {
+    id
+    name
+    firstName
+    lastName
+    email
+    phone
+    specialization
+    status
+    experienceYears
+  }
+}
+
+query TechniciansPaginated(
+  $page: Int
+  $limit: Int
+  $search: String
+  $status: String
+) {
+  techniciansPaginated(page: $page, limit: $limit, search: $search, status: $status) {
+    total
+    page
+    limit
+    items {
+      id
+      name
+      email
+      specialization
+      status
+    }
+  }
+}
+
+query Technician($id: Int!) {
+  technician(id: $id) {
+    id
+    name
+    email
+    specialization
+    certifications
+  }
+}
+
+query TechniciansByStatus($status: String) {
+  techniciansByStatus(status: $status) {
+    id
+    name
+    status
+  }
+}
+
+query TechniciansBySpecialization($specialization: String) {
+  techniciansBySpecialization(specialization: $specialization) {
+    id
+    name
+    specialization
+  }
+}
+
+# ---------------------------------------------------------------------------
+# CATEGORIES & SUBCATEGORIES
+# ---------------------------------------------------------------------------
+
+query Categories {
+  categories {
+    id
+    name
+    description
+    icon
+    isActive
+    subCategories {
+      id
+      name
+    }
+  }
+}
+
+query Category($id: Int!) {
+  category(id: $id) {
+    id
+    name
+    description
+    subCategories {
+      id
+      name
+      categoryId
+    }
+  }
+}
+
+query SubCategories {
+  subCategories {
+    id
+    categoryId
+    name
+    description
+    isActive
+  }
+}
+
+query SubCategoriesByCategory($categoryId: Int!) {
+  subCategoriesByCategory(categoryId: $categoryId) {
+    id
+    name
+    description
+  }
+}
+
+query SubCategory($id: Int!) {
+  subCategory(id: $id) {
+    id
+    name
+    category {
+      id
+      name
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# PRICE MAPPINGS
+# ---------------------------------------------------------------------------
+
+query PriceMappings {
+  priceMappings {
+    id
+    categoryId
+    subCategoryId
+    serviceName
+    serviceType
+    basePrice
+    gstPercentage
+    totalPrice
+    unit
+    isActive
+  }
+}
+
+query PriceMappingsByCategory($categoryId: Int!) {
+  priceMappingsByCategory(categoryId: $categoryId) {
+    id
+    serviceName
+    basePrice
+    totalPrice
+  }
+}
+
+query PriceMapping($id: Int!) {
+  priceMapping(id: $id) {
+    id
+    serviceName
+    serviceType
+    basePrice
+    totalPrice
+  }
+}
+
+# ---------------------------------------------------------------------------
+# SUBSCRIPTION PLANS & AMC PLANS
+# ---------------------------------------------------------------------------
+
+query SubscriptionPlans {
+  subscriptionPlans {
+    id
+    name
+    description
+    billingCycle
+    price
+    discountPercentage
+    features
+    maxUsers
+    isActive
+    createdAt
+  }
+}
+
+query SubscriptionPlan($id: Int!) {
+  subscriptionPlan(id: $id) {
+    id
+    name
+    billingCycle
+    price
+    features
+  }
+}
+
+query ActiveSubscriptionPlans {
+  activeSubscriptionPlans {
+    id
+    name
+    price
+    billingCycle
+  }
+}
+
+query AmcPlans {
+  amcPlans {
+    id
+    name
+    description
+    coverageType
+    annualCost
+    coverageItems
+    isActive
+    breakageCovered
+    accidentalDamageCovered
+  }
+}
+
+query AmcPlan($id: Int!) {
+  amcPlan(id: $id) {
+    id
+    name
+    annualCost
+    coverageType
+  }
+}
+
+query ActiveAmcPlans {
+  activeAmcPlans {
+    id
+    name
+    annualCost
+  }
+}
+
+# ---------------------------------------------------------------------------
+# SUBSCRIPTIONS & AMC SUBSCRIPTIONS
+# ---------------------------------------------------------------------------
+
+query Subscriptions {
+  subscriptions {
+    id
+    subscriptionNumber
+    customerId
+    customerName
+    customerEmail
+    planId
+    status
+    startDate
+    endDate
+    totalAmount
+    plan {
+      id
+      name
+      price
+    }
+  }
+}
+
+query Subscription($id: Int!) {
+  subscription(id: $id) {
+    id
+    subscriptionNumber
+    status
+    plan {
+      id
+      name
+    }
+  }
+}
+
+query SubscriptionsByCustomer($customerId: String!) {
+  subscriptionsByCustomer(customerId: $customerId) {
+    id
+    subscriptionNumber
+    status
+  }
+}
+
+query SubscriptionsByStatus($status: String!) {
+  subscriptionsByStatus(status: $status) {
+    id
+    customerId
+    status
+  }
+}
+
+query AmcSubscriptions {
+  amcSubscriptions {
+    id
+    amcNumber
+    customerId
+    status
+    plan {
+      id
+      name
+      annualCost
+    }
+  }
+}
+
+query AmcSubscriptionsByAsset($assetId: Int!) {
+  amcSubscriptionsByAsset(assetId: $assetId) {
+    id
+    amcNumber
+  }
+}
+
+query AmcSubscriptionsByCustomer($customerId: String!) {
+  amcSubscriptionsByCustomer(customerId: $customerId) {
+    id
+    amcNumber
+    status
+  }
+}
+
+# ---------------------------------------------------------------------------
+# ASSETS & REGISTRY & WARRANTY & SERVICE MAPPINGS
+# ---------------------------------------------------------------------------
+
+query Assets {
+  assets {
+    id
+    assetNumber
+    customerId
+    assetName
+    assetCategory
+    status
+    serialNumber
+  }
+}
+
+query AssetsPaginated(
+  $page: Int
+  $limit: Int
+  $search: String
+  $status: String
+  $category: String
+  $zipCode: String
+) {
+  assetsPaginated(
+    page: $page
+    limit: $limit
+    search: $search
+    status: $status
+    category: $category
+    zipCode: $zipCode
+  ) {
+    total
+    page
+    limit
+    items {
+      id
+      assetName
+      assetCategory
+      status
+    }
+  }
+}
+
+query Asset($id: Int!) {
+  asset(id: $id) {
+    id
+    assetName
+    customerName
+    location
+    serialNumber
+  }
+}
+
+query AssetsByCustomer($customerId: String!) {
+  assetsByCustomer(customerId: $customerId) {
+    id
+    assetName
+    status
+  }
+}
+
+query AssetsByCategory($assetCategory: String!) {
+  assetsByCategory(assetCategory: $assetCategory) {
+    id
+    assetName
+  }
+}
+
+query AssetRegistries {
+  assetRegistries {
+    id
+    assetId
+    registrationNumber
+    status
+  }
+}
+
+query AssetRegistry($id: Int!) {
+  assetRegistry(id: $id) {
+    id
+    registrationNumber
+    asset {
+      id
+      assetName
+    }
+  }
+}
+
+query WarrantyRecords {
+  warrantyRecords {
+    id
+    assetId
+    warrantyType
+    warrantyStartDate
+    warrantyEndDate
+  }
+}
+
+query WarrantyByAsset($assetId: Int!) {
+  warrantyByAsset(assetId: $assetId) {
+    id
+    warrantyType
+    warrantyEndDate
+  }
+}
+
+query AssetServiceMappings {
+  assetServiceMappings {
+    id
+    assetId
+    serviceCategoryId
+    nextServiceDate
+  }
+}
+
+query AssetServiceMappingsByAsset($assetId: Int!) {
+  assetServiceMappingsByAsset(assetId: $assetId) {
+    id
+    lastServiceDate
+    nextServiceDate
+  }
+}
+
+# ---------------------------------------------------------------------------
+# TICKETS / ORDERS / SERVICE BOOKINGS
+# ---------------------------------------------------------------------------
+
+query Tickets {
+  tickets {
+    id
+    ticketNumber
+    orderNo
+    status
+    customerName
+    issueDescription
+    assignedTo
+  }
+}
+
+query Ticket($id: Int!) {
+  ticket(id: $id) {
+    id
+    ticketNumber
+    status
+    priority
+    technician {
+      id
+      name
+    }
+  }
+}
+
+query Orders {
+  orders {
+    id
+    ticketNumber
+    status
+  }
+}
+
+query Order($id: Int!) {
+  order(id: $id) {
+    id
+    ticketNumber
+    status
+  }
+}
+
+query OrdersPaginated($page: Int, $limit: Int, $search: String, $status: String) {
+  ordersPaginated(page: $page, limit: $limit, search: $search, status: $status) {
+    total
+    page
+    limit
+    items {
+      id
+      ticketNumber
+      status
+    }
+  }
+}
+
+query TicketsByStatus($status: String!) {
+  ticketsByStatus(status: $status) {
+    id
+    ticketNumber
+  }
+}
+
+query TicketsByPriority($priority: String!) {
+  ticketsByPriority(priority: $priority) {
+    id
+    ticketNumber
+    priority
+  }
+}
+
+query TicketsByTechnician($assignedTo: Int!) {
+  ticketsByTechnician(assignedTo: $assignedTo) {
+    id
+    ticketNumber
+    assignedTo
+  }
+}
+
+query ServiceBookings {
+  serviceBookings {
+    id
+    bookingNumber
+    serviceStatus
+    serviceType
+    customerName
+  }
+}
+
+query ServiceBooking($id: Int!) {
+  serviceBooking(id: $id) {
+    id
+    bookingNumber
+    serviceStatus
+    estimatedCost
+  }
+}
+
+query ServiceBookingsByAsset($assetId: Int!) {
+  serviceBookingsByAsset(assetId: $assetId) {
+    id
+    bookingNumber
+  }
+}
+
+query ServiceBookingsByStatus($serviceStatus: String!) {
+  serviceBookingsByStatus(serviceStatus: $serviceStatus) {
+    id
+    bookingNumber
+    serviceStatus
+  }
+}
+
+# ---------------------------------------------------------------------------
+# ESCALATIONS & COMPLIANCE
+# ---------------------------------------------------------------------------
+
+query Escalations {
+  escalations {
+    id
+    ticketId
+    reason
+    escalatedTo
+    status
+  }
+}
+
+query EscalationsByTicket($ticketId: Int!) {
+  escalationsByTicket(ticketId: $ticketId) {
+    id
+    reason
+    expectedResolutionTime
+  }
+}
+
+query ComplianceRecords {
+  complianceRecords {
+    id
+    technicianId
+    complianceType
+    issuedDate
+    expiryDate
+  }
+}
+
+query ComplianceByTechnician($technicianId: Int!) {
+  complianceByTechnician(technicianId: $technicianId) {
+    id
+    complianceType
+    status
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — USERS & POSTS
+# ---------------------------------------------------------------------------
+
+mutation CreateUser(
+  $email: String!
+  $firstName: String
+  $lastName: String
+  $phone: String
+  $userType: String
+) {
+  createUser(
+    email: $email
+    firstName: $firstName
+    lastName: $lastName
+    phone: $phone
+    userType: $userType
+  ) {
+    success
+    message
+    user {
+      id
+      email
+      firstName
+      lastName
+    }
+  }
+}
+
+mutation UpdateUser(
+  $id: Int!
+  $firstName: String
+  $lastName: String
+  $email: String
+  $phone: String
+  $userType: String
+  $isActive: Boolean
+) {
+  updateUser(
+    id: $id
+    firstName: $firstName
+    lastName: $lastName
+    email: $email
+    phone: $phone
+    userType: $userType
+    isActive: $isActive
+  ) {
+    success
+    message
+    user {
+      id
+      email
+      isActive
+    }
+  }
+}
+
+mutation DeleteUser($id: Int!) {
+  deleteUser(id: $id) {
+    success
+    message
+  }
+}
+
+mutation CreatePost($title: String!, $userId: Int!, $content: String) {
+  createPost(title: $title, userId: $userId, content: $content) {
+    success
+    message
+    post {
+      id
+      title
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — TECHNICIANS
+# ---------------------------------------------------------------------------
+
+mutation CreateTechnician(
+  $name: String!
+  $email: String!
+  $phone: String!
+  $specialization: String!
+  $experienceYears: Int
+  $certifications: String
+) {
+  createTechnician(
+    name: $name
+    email: $email
+    phone: $phone
+    specialization: $specialization
+    experienceYears: $experienceYears
+    certifications: $certifications
+  ) {
+    success
+    message
+    technician {
+      id
+      name
+      email
+    }
+  }
+}
+
+mutation UpdateTechnician(
+  $id: Int!
+  $name: String
+  $email: String
+  $phone: String
+  $specialization: String
+  $status: String
+  $experienceYears: Int
+  $certifications: String
+) {
+  updateTechnician(
+    id: $id
+    name: $name
+    email: $email
+    phone: $phone
+    specialization: $specialization
+    status: $status
+    experienceYears: $experienceYears
+    certifications: $certifications
+  ) {
+    success
+    message
+    technician {
+      id
+      status
+    }
+  }
+}
+
+mutation DeleteTechnician($id: Int!) {
+  deleteTechnician(id: $id) {
+    success
+    message
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — CATEGORIES
+# ---------------------------------------------------------------------------
+
+mutation CreateCategory($name: String!, $description: String, $icon: String) {
+  createCategory(name: $name, description: $description, icon: $icon) {
+    success
+    message
+    category {
+      id
+      name
+    }
+  }
+}
+
+mutation UpdateCategory(
+  $id: Int!
+  $name: String
+  $description: String
+  $icon: String
+  $isActive: Boolean
+) {
+  updateCategory(
+    id: $id
+    name: $name
+    description: $description
+    icon: $icon
+    isActive: $isActive
+  ) {
+    success
+    message
+    category {
+      id
+      isActive
+    }
+  }
+}
+
+mutation DeleteCategory($id: Int!) {
+  deleteCategory(id: $id) {
+    success
+    message
+  }
+}
+
+mutation CreateSubCategory($categoryId: Int!, $name: String!, $description: String) {
+  createSubCategory(categoryId: $categoryId, name: $name, description: $description) {
+    success
+    message
+    subCategory {
+      id
+      name
+      categoryId
+    }
+  }
+}
+
+mutation UpdateSubCategory(
+  $id: Int!
+  $name: String
+  $description: String
+  $isActive: Boolean
+) {
+  updateSubCategory(id: $id, name: $name, description: $description, isActive: $isActive) {
+    success
+    message
+    subCategory {
+      id
+      name
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — PRICE MAPPINGS
+# ---------------------------------------------------------------------------
+
+mutation CreatePriceMapping(
+  $categoryId: Int!
+  $subCategoryId: Int
+  $serviceName: String!
+  $serviceType: String!
+  $basePrice: Float!
+  $gstPercentage: Float
+  $unit: String
+) {
+  createPriceMapping(
+    categoryId: $categoryId
+    subCategoryId: $subCategoryId
+    serviceName: $serviceName
+    serviceType: $serviceType
+    basePrice: $basePrice
+    gstPercentage: $gstPercentage
+    unit: $unit
+  ) {
+    success
+    message
+    priceMapping {
+      id
+      serviceName
+      totalPrice
+    }
+  }
+}
+
+mutation UpdatePriceMapping(
+  $id: Int!
+  $serviceName: String
+  $basePrice: Float
+  $gstPercentage: Float
+  $isActive: Boolean
+) {
+  updatePriceMapping(
+    id: $id
+    serviceName: $serviceName
+    basePrice: $basePrice
+    gstPercentage: $gstPercentage
+    isActive: $isActive
+  ) {
+    success
+    message
+    priceMapping {
+      id
+      basePrice
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — PLANS & SUBSCRIPTIONS
+# ---------------------------------------------------------------------------
+
+mutation CreateSubscriptionPlan(
+  $name: String!
+  $billingCycle: String!
+  $price: Float!
+  $description: String
+  $discountPercentage: Float
+  $features: String
+  $maxUsers: Int
+) {
+  createSubscriptionPlan(
+    name: $name
+    billingCycle: $billingCycle
+    price: $price
+    description: $description
+    discountPercentage: $discountPercentage
+    features: $features
+    maxUsers: $maxUsers
+  ) {
+    success
+    message
+    subscriptionPlan {
+      id
+      name
+      price
+    }
+  }
+}
+
+mutation UpdateSubscriptionPlan(
+  $id: Int!
+  $name: String
+  $price: Float
+  $discountPercentage: Float
+  $isActive: Boolean
+) {
+  updateSubscriptionPlan(
+    id: $id
+    name: $name
+    price: $price
+    discountPercentage: $discountPercentage
+    isActive: $isActive
+  ) {
+    success
+    message
+    subscriptionPlan {
+      id
+      isActive
+    }
+  }
+}
+
+mutation CreateAmcPlan(
+  $name: String!
+  $coverageType: String!
+  $annualCost: Float!
+  $description: String
+  $coverageItems: String
+  $breakageCovered: Boolean
+  $accidentalDamageCovered: Boolean
+) {
+  createAmcPlan(
+    name: $name
+    coverageType: $coverageType
+    annualCost: $annualCost
+    description: $description
+    coverageItems: $coverageItems
+    breakageCovered: $breakageCovered
+    accidentalDamageCovered: $accidentalDamageCovered
+  ) {
+    success
+    message
+    amcPlan {
+      id
+      name
+      annualCost
+    }
+  }
+}
+
+mutation CreateSubscription(
+  $subscriptionNumber: String!
+  $customerId: String!
+  $customerName: String!
+  $customerEmail: String!
+  $planId: Int!
+  $startDate: String!
+  $endDate: String!
+  $totalAmount: Float!
+) {
+  createSubscription(
+    subscriptionNumber: $subscriptionNumber
+    customerId: $customerId
+    customerName: $customerName
+    customerEmail: $customerEmail
+    planId: $planId
+    startDate: $startDate
+    endDate: $endDate
+    totalAmount: $totalAmount
+  ) {
+    success
+    message
+    subscription {
+      id
+      subscriptionNumber
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — ASSETS
+# ---------------------------------------------------------------------------
+
+mutation CreateAsset(
+  $assetNumber: String!
+  $customerId: String!
+  $customerName: String!
+  $customerEmail: String!
+  $assetName: String!
+  $assetCategory: String!
+  $serialNumber: String!
+  $assetBrand: String
+  $assetModel: String
+  $location: String
+  $purchaseDate: String
+  $warrantyExpiryDate: String
+  $description: String
+  $specifications: String
+) {
+  createAsset(
+    assetNumber: $assetNumber
+    customerId: $customerId
+    customerName: $customerName
+    customerEmail: $customerEmail
+    assetName: $assetName
+    assetCategory: $assetCategory
+    serialNumber: $serialNumber
+    assetBrand: $assetBrand
+    assetModel: $assetModel
+    location: $location
+    purchaseDate: $purchaseDate
+    warrantyExpiryDate: $warrantyExpiryDate
+    description: $description
+    specifications: $specifications
+  ) {
+    success
+    message
+    asset {
+      id
+      assetName
+    }
+  }
+}
+
+mutation UpdateAsset($id: Int!, $assetName: String, $location: String, $status: String) {
+  updateAsset(id: $id, assetName: $assetName, location: $location, status: $status) {
+    success
+    message
+    asset {
+      id
+      status
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — TICKETS / ORDERS / ESCALATIONS / SERVICE BOOKINGS
+# ---------------------------------------------------------------------------
+
+mutation CreateTicket(
+  $ticketNumber: String!
+  $customerName: String!
+  $customerEmail: String!
+  $customerPhone: String!
+  $issueDescription: String!
+  $categoryId: Int
+  $priority: String
+) {
+  createTicket(
+    ticketNumber: $ticketNumber
+    customerName: $customerName
+    customerEmail: $customerEmail
+    customerPhone: $customerPhone
+    issueDescription: $issueDescription
+    categoryId: $categoryId
+    priority: $priority
+  ) {
+    success
+    message
+    ticket {
+      id
+      ticketNumber
+      status
+    }
+  }
+}
+
+mutation UpdateTicket(
+  $id: Int!
+  $status: String
+  $priority: String
+  $assignedTo: Int
+  $resolutionNotes: String
+) {
+  updateTicket(
+    id: $id
+    status: $status
+    priority: $priority
+    assignedTo: $assignedTo
+    resolutionNotes: $resolutionNotes
+  ) {
+    success
+    message
+    ticket {
+      id
+      status
+      assignedTo
+    }
+  }
+}
+
+mutation AssignTechnicianToOrder($orderId: Int!, $technicianId: Int!) {
+  assignTechnicianToOrder(orderId: $orderId, technicianId: $technicianId) {
+    success
+    message
+    ticket {
+      id
+      status
+      assignedTo
+    }
+  }
+}
+
+mutation EscalateOrder(
+  $orderId: Int!
+  $reason: String!
+  $escalatedTo: String!
+  $expectedResolutionTime: Int
+) {
+  escalateOrder(
+    orderId: $orderId
+    reason: $reason
+    escalatedTo: $escalatedTo
+    expectedResolutionTime: $expectedResolutionTime
+  ) {
+    success
+    message
+    ticket {
+      id
+      status
+    }
+    escalation {
+      id
+      reason
+    }
+  }
+}
+
+mutation CreateEscalation(
+  $ticketId: Int!
+  $reason: String!
+  $escalatedTo: String!
+  $expectedResolutionTime: Int
+) {
+  createEscalation(
+    ticketId: $ticketId
+    reason: $reason
+    escalatedTo: $escalatedTo
+    expectedResolutionTime: $expectedResolutionTime
+  ) {
+    success
+    message
+    escalation {
+      id
+      reason
+    }
+  }
+}
+
+mutation CreateServiceBooking(
+  $bookingNumber: String!
+  $assetId: Int!
+  $customerId: String!
+  $customerName: String!
+  $customerEmail: String!
+  $customerPhone: String!
+  $serviceType: String!
+  $scheduledDate: String!
+  $scheduledTimeSlot: String
+  $estimatedCost: Float
+) {
+  createServiceBooking(
+    bookingNumber: $bookingNumber
+    assetId: $assetId
+    customerId: $customerId
+    customerName: $customerName
+    customerEmail: $customerEmail
+    customerPhone: $customerPhone
+    serviceType: $serviceType
+    scheduledDate: $scheduledDate
+    scheduledTimeSlot: $scheduledTimeSlot
+    estimatedCost: $estimatedCost
+  ) {
+    success
+    message
+    serviceBooking {
+      id
+      bookingNumber
+    }
+  }
+}
+
+mutation UpdateServiceBooking(
+  $id: Int!
+  $serviceStatus: String
+  $technicianId: Int
+  $actualCost: Float
+  $serviceNotes: String
+  $customerRating: Int
+  $customerFeedback: String
+) {
+  updateServiceBooking(
+    id: $id
+    serviceStatus: $serviceStatus
+    technicianId: $technicianId
+    actualCost: $actualCost
+    serviceNotes: $serviceNotes
+    customerRating: $customerRating
+    customerFeedback: $customerFeedback
+  ) {
+    success
+    message
+    serviceBooking {
+      id
+      serviceStatus
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# MUTATIONS — WARRANTY & COMPLIANCE
+# ---------------------------------------------------------------------------
+
+mutation CreateWarrantyTracking(
+  $assetId: Int!
+  $warrantyType: String!
+  $warrantyStartDate: String!
+  $warrantyEndDate: String!
+  $coverageDetails: String
+  $warrantyProvider: String
+  $claimLimit: Float
+) {
+  createWarrantyTracking(
+    assetId: $assetId
+    warrantyType: $warrantyType
+    warrantyStartDate: $warrantyStartDate
+    warrantyEndDate: $warrantyEndDate
+    coverageDetails: $coverageDetails
+    warrantyProvider: $warrantyProvider
+    claimLimit: $claimLimit
+  ) {
+    success
+    message
+    warranty {
+      id
+    }
+  }
+}
+
+mutation CreateComplianceRecord(
+  $technicianId: Int!
+  $complianceType: String!
+  $issuedDate: String!
+  $description: String
+  $expiryDate: String
+  $certificationDocument: String
+) {
+  createComplianceRecord(
+    technicianId: $technicianId
+    complianceType: $complianceType
+    issuedDate: $issuedDate
+    description: $description
+    expiryDate: $expiryDate
+    certificationDocument: $certificationDocument
+  ) {
+    success
+    message
+    complianceRecord {
+      id
+    }
+  }
+}

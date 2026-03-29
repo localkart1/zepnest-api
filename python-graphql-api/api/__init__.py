@@ -79,6 +79,9 @@ def create_app():
         from api.rest.routes import rest_bp
         app.register_blueprint(rest_bp)
 
+        from api.web_auth import web_auth_bp
+        app.register_blueprint(web_auth_bp)
+
         from api.mobile.routes import mobile_bp
         app.register_blueprint(mobile_bp)
 

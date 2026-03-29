@@ -301,7 +301,11 @@ def main() -> None:
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "From `accessToken` in POST /mobile/auth/verify-otp response. Use header: Authorization: Bearer <token>",
+        "description": (
+            "JWT in `Authorization: Bearer <token>`. **Mobile:** `accessToken` from "
+            "`POST /mobile/auth/verify-otp` (`typ: mobile_customer`). **Web:** `accessToken` from "
+            "`POST /api/auth/login` or `/api/auth/register` (`typ: web_user`)."
+        ),
     }
     schemas = comp.setdefault("schemas", {})
     schemas["MobileRequestOtpResponse"] = {

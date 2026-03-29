@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Zepnest API (Web + Mobile)",
-    "description": "JSON REST API under `/api` for the admin portal (customers, technicians, orders, services, catalog, subscriptions, payments).\nGraphQL remains at `/graphql` (not included in this document).\n\n\n**Mobile** routes are under `/mobile` (JWT Bearer after verify-otp). GraphQL at `/graphql` is not included.",
+    "description": "JSON REST API under `/api` for the admin portal (customers, technicians, orders, services, catalog, subscriptions, payments).\n**Web auth (email/password):** `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me` (JWT `typ: web_user`).\nGraphQL remains at `/graphql` (not included in this document).\n\n\n**Mobile** routes are under `/mobile` (JWT Bearer after verify-otp). GraphQL at `/graphql` is not included.",
     "version": "1.0.0"
   },
   "servers": [
@@ -16,6 +16,9 @@
     }
   ],
   "tags": [
+    {
+      "name": "Auth"
+    },
     {
       "name": "Customers"
     },
@@ -72,6 +75,103 @@
     }
   ],
   "paths": {
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register with email and password (web)",
+        "description": "Stores a Werkzeug hash in `users.password_hash`. New accounts are `user_type=customer`. Email is normalized to lowercase.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "description": "Plain text; stored hashed"
+                  },
+                  "firstName": { "type": "string" },
+                  "lastName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created; JWT returned",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WebAuthSuccess" }
+              }
+            }
+          },
+          "400": { "description": "Validation error" },
+          "409": { "description": "Email already registered" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login with email and password (web)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JWT issued",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WebAuthSuccess" }
+              }
+            }
+          },
+          "400": { "description": "Missing fields" },
+          "401": { "description": "Invalid credentials or inactive user" }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Current user (web JWT)",
+        "description": "Use **Authorize** with the `accessToken` from `/api/auth/login` or `/api/auth/register`. Token payload includes `typ: web_user` (not the same as mobile OTP JWTs).",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "User profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": { "$ref": "#/components/schemas/WebAuthUser" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid token" }
+        }
+      }
+    },
     "/api/customers": {
       "get": {
         "tags": [
@@ -1625,6 +1725,30 @@
           }
         }
       },
+      "WebAuthUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "users.user_id"
+          },
+          "email": { "type": "string" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "userType": { "type": "string" }
+        }
+      },
+      "WebAuthSuccess": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "JWT; typ web_user"
+          },
+          "expiresInHours": { "type": "integer" },
+          "user": { "$ref": "#/components/schemas/WebAuthUser" }
+        }
+      },
       "OrderCreate": {
         "type": "object",
         "required": [],
@@ -1806,7 +1930,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "From `accessToken` in POST /mobile/auth/verify-otp response. Use header: Authorization: Bearer <token>"
+        "description": "JWT in `Authorization: Bearer <token>`. **Mobile:** `accessToken` from `POST /mobile/auth/verify-otp` (`typ: mobile_customer`). **Web:** `accessToken` from `POST /api/auth/login` or `/api/auth/register` (`typ: web_user`)."
       }
     }
   }
