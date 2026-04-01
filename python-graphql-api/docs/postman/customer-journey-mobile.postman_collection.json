@@ -1,0 +1,399 @@
+{
+  "info": {
+    "_postman_id": "cf8f2f5c-0c7f-4d99-9db5-b8778d4f0f01",
+    "name": "Customer Journey - Mobile OTP to Booking",
+    "description": "End-to-end customer journey collection for python-graphql-api.\n\nCovers flow:\n1) OTP Generation\n2) OTP Verification\n3) Address Update\n4) Profile Update\n5) Get Categories\n6) Get Subcategories by Category\n7) Attach image/voice/video + notes\n8) Select time slot\n9) Create Booking\n10) View Booking with Booking Items\n\nDB tables touched in this flow:\n- mobile_otp_sessions\n- users\n- addresses (fallback: customer_addresses)\n- bookings\n- booking_items\n\nHow to use:\n- Set collection variables: baseUrl, phone, otp\n- Run requests in order\n- OTP verification requires a valid OTP from SMS/logs (or your local deterministic OTP setup)\n- Bearer token is auto-captured after verify-otp",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. OTP Generation",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"phone\": \"{{phone}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/auth/request-otp",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "auth",
+            "request-otp"
+          ]
+        },
+        "description": "Creates OTP session in mobile_otp_sessions table."
+      }
+    },
+    {
+      "name": "2. OTP Verification",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "var res = pm.response.json();",
+              "if (res && res.accessToken) {",
+              "  pm.collectionVariables.set('accessToken', res.accessToken);",
+              "}",
+              "if (res && res.user && res.user.id) {",
+              "  pm.collectionVariables.set('userId', String(res.user.id));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"otp\": \"{{otp}}\",\n  \"firstName\": \"Journey\",\n  \"lastName\": \"Tester\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/auth/verify-otp",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "auth",
+            "verify-otp"
+          ]
+        },
+        "description": "Marks OTP consumed and creates/updates user profile."
+      }
+    },
+    {
+      "name": "3. Address Update (Create)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Home\",\n  \"line1\": \"12 MG Road\",\n  \"line2\": \"Near Metro\",\n  \"city\": \"Bengaluru\",\n  \"state\": \"Karnataka\",\n  \"zipCode\": \"560001\",\n  \"country\": \"India\",\n  \"addressType\": \"home\",\n  \"isDefault\": true\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/addresses",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "addresses"
+          ]
+        },
+        "description": "Inserts/updates address in addresses table."
+      }
+    },
+    {
+      "name": "4. Profile Update",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Journey\",\n  \"lastName\": \"Tester\",\n  \"email\": \"{{phone}}@example.com\",\n  \"address\": {\n    \"label\": \"Home\",\n    \"line1\": \"12 MG Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"zipCode\": \"560001\",\n    \"country\": \"India\",\n    \"addressType\": \"home\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/profile",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "profile"
+          ]
+        },
+        "description": "Updates users table profile fields and default address."
+      }
+    },
+    {
+      "name": "5. Get Categories",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "var res = pm.response.json();",
+              "if (res && Array.isArray(res.categories) && res.categories.length > 0) {",
+              "  var cat = res.categories[0];",
+              "  if (cat.id) pm.collectionVariables.set('categoryId', String(cat.id));",
+              "  if (Array.isArray(cat.services) && cat.services.length > 0 && cat.services[0].id) {",
+              "    pm.collectionVariables.set('serviceId1', String(cat.services[0].id));",
+              "  }",
+              "  if (Array.isArray(cat.services) && cat.services.length > 1 && cat.services[1].id) {",
+              "    pm.collectionVariables.set('serviceId2', String(cat.services[1].id));",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/mobile/home",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "home"
+          ]
+        },
+        "description": "Returns categories + services for next steps."
+      }
+    },
+    {
+      "name": "6. Get Subcategories by Category",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/mobile/catalog/subcategories?categoryId={{categoryId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "catalog",
+            "subcategories"
+          ],
+          "query": [
+            {
+              "key": "categoryId",
+              "value": "{{categoryId}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "8. Get Time Slots",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+              "var res = pm.response.json();",
+              "if (Array.isArray(res) && res.length > 0 && res[0].timeSlot) {",
+              "  pm.collectionVariables.set('timeSlot', String(res[0].timeSlot));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/enumerations/time-slots",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "enumerations",
+            "time-slots"
+          ]
+        },
+        "description": "Fetches active time slot from time_slot_master."
+      }
+    },
+    {
+      "name": "7+9. Create Booking (Attach media/notes)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 201/200', function () {",
+              "  pm.expect([200, 201]).to.include(pm.response.code);",
+              "});",
+              "var res = pm.response.json();",
+              "if (res && res.id) {",
+              "  pm.collectionVariables.set('bookingId', String(res.id));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"serviceAddress\": \"12 MG Road, Bengaluru\",\n  \"serviceIds\": [\n    {{serviceId1}}\n  ],\n  \"description\": \"AC service needed\",\n  \"voiceNoteUrl\": \"https://s3.example.com/mobile/voice/test-voice.m4a\",\n  \"videoUrl\": \"https://s3.example.com/mobile/video/test-video.mp4\",\n  \"imageUrl\": \"https://s3.example.com/mobile/image/test-image.jpg\",\n  \"customerNotes\": \"Preferred slot: {{timeSlot}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/bookings",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "bookings"
+          ]
+        },
+        "description": "Creates rows in bookings + booking_items."
+      }
+    },
+    {
+      "name": "10A. View Booking List",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/mobile/bookings?page=1&limit=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "bookings"
+          ],
+          "query": [
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "limit",
+              "value": "20"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10B. View Booking Detail (with items)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/mobile/bookings/{{bookingId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "bookings",
+            "{{bookingId}}"
+          ]
+        },
+        "description": "Returns booking details including bookingItems."
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5003"
+    },
+    {
+      "key": "phone",
+      "value": "9968770555"
+    },
+    {
+      "key": "otp",
+      "value": "123456"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "categoryId",
+      "value": "1"
+    },
+    {
+      "key": "serviceId1",
+      "value": "1"
+    },
+    {
+      "key": "serviceId2",
+      "value": ""
+    },
+    {
+      "key": "timeSlot",
+      "value": "07:30 - 08:00"
+    },
+    {
+      "key": "bookingId",
+      "value": ""
+    }
+  ]
+}
