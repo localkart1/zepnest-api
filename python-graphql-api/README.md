@@ -16,6 +16,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+One-command bootstrap:
+
+```bash
+./scripts/bootstrap.sh
+```
+
 Create `.env` from `.env.example` and set `DATABASE_URL`, `DB_SCHEMA`, `SECRET_KEY`, `PORT`.
 
 ```bash

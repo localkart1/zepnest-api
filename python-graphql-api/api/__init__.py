@@ -45,9 +45,9 @@ def _install_audit_logging(app: Flask) -> None:
         return
 
     engine = db.engine
-    if engine.info.get("_audit_installed"):
+    if getattr(engine, "_audit_installed", False):
         return
-    engine.info["_audit_installed"] = True
+    setattr(engine, "_audit_installed", True)
 
     @event.listens_for(engine, "after_cursor_execute")
     def _audit_dml(conn, cursor, statement, parameters, context, executemany):
@@ -91,38 +91,41 @@ def _install_audit_logging(app: Flask) -> None:
         body_raw = request.get_json(silent=True) if request.mimetype == "application/json" else None
         body_txt = json.dumps(body_raw, default=str)[:8000] if body_raw is not None else None
 
+        payload = {
+            "actor_user_id": actor_user_id,
+            "actor_type": actor_type,
+            "action": first,
+            "table_name": table_name,
+            "http_method": request.method,
+            "request_path": request.path,
+            "endpoint": request.endpoint,
+            "remote_addr": request.headers.get("X-Forwarded-For", request.remote_addr),
+            "user_agent": request.user_agent.string if request.user_agent else None,
+            "sql_text": statement[:12000],
+            "sql_params": params_txt,
+            "request_query": query_txt,
+            "request_body": body_txt,
+        }
+
         try:
-            conn.info["_audit_in_progress"] = True
-            conn.exec_driver_sql(
-                """
-                INSERT INTO audit_logs
-                    (occurred_at, actor_user_id, actor_type, action, table_name, http_method, request_path,
-                     endpoint, remote_addr, user_agent, sql_text, sql_params, request_query, request_body)
-                VALUES
-                    (NOW(), :actor_user_id, :actor_type, :action, :table_name, :http_method, :request_path,
-                     :endpoint, :remote_addr, :user_agent, :sql_text, :sql_params, :request_query, :request_body)
-                """,
-                {
-                    "actor_user_id": actor_user_id,
-                    "actor_type": actor_type,
-                    "action": first,
-                    "table_name": table_name,
-                    "http_method": request.method,
-                    "request_path": request.path,
-                    "endpoint": request.endpoint,
-                    "remote_addr": request.headers.get("X-Forwarded-For", request.remote_addr),
-                    "user_agent": request.user_agent.string if request.user_agent else None,
-                    "sql_text": statement[:12000],
-                    "sql_params": params_txt,
-                    "request_query": query_txt,
-                    "request_body": body_txt,
-                },
-            )
+            # Use an independent DB transaction so audit failures never poison
+            # the request transaction.
+            with conn.engine.begin() as audit_conn:
+                audit_conn.info["_audit_in_progress"] = True
+                audit_conn.exec_driver_sql(
+                    """
+                    INSERT INTO audit_logs
+                        (occurred_at, actor_user_id, actor_type, action, table_name, http_method, request_path,
+                         endpoint, remote_addr, user_agent, sql_text, sql_params, request_query, request_body)
+                    VALUES
+                        (NOW(), :actor_user_id, :actor_type, :action, :table_name, :http_method, :request_path,
+                         :endpoint, :remote_addr, :user_agent, :sql_text, :sql_params, :request_query, :request_body)
+                    """,
+                    payload,
+                )
         except Exception:
             # Do not break API flow if audit table/insert fails.
             pass
-        finally:
-            conn.info["_audit_in_progress"] = False
 
 def create_app():
     """Create and configure Flask application"""

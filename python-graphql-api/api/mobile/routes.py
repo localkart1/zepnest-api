@@ -49,7 +49,10 @@ MOBILE_JSON_PREFIX = "[mobile-json]"
 
 
 def _q(sql: str, params=None):
-    return db.session.execute(text(sql), params or {}).mappings().all()
+    result = db.session.execute(text(sql), params or {})
+    if not result.returns_rows:
+        return []
+    return result.mappings().all()
 
 
 def _one(sql: str, params=None):

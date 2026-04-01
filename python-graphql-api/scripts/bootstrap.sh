@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ ! -d "venv" ]]; then
+  echo "Creating virtual environment..."
+  python3 -m venv venv
+fi
+
+echo "Activating virtual environment..."
+source venv/bin/activate
+
+echo "Installing requirements..."
+python -m pip install -r requirements.txt
+
+echo "Starting API server..."
+exec python main.py
+

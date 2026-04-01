@@ -4,6 +4,7 @@ from datetime import datetime
 from flask import Blueprint, Response, jsonify, request, send_file
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError
 
 from api import db
 from api.booking_status import (
@@ -1544,22 +1545,55 @@ def create_review():
     if rating < 1 or rating > 5:
         return jsonify({"message": "rating must be between 1 and 5"}), 400
 
-    row = _one(
-        """
-        INSERT INTO reviews (booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at)
-        VALUES (:booking_id, :customer_id, :technician_id, :rating, :title, :review_text, :is_active, NOW(), NOW())
-        RETURNING review_id, booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at
-        """,
-        {
-            "booking_id": d.get("bookingId") or d.get("booking_id"),
-            "customer_id": d.get("customerId") or d.get("customer_id"),
-            "technician_id": d.get("technicianId") or d.get("technician_id"),
-            "rating": rating,
-            "title": d.get("title"),
-            "review_text": d.get("review") or d.get("reviewText"),
-            "is_active": False if d.get("status") == "inactive" else True,
-        },
-    )
+    booking_id = d.get("bookingId") or d.get("booking_id")
+    customer_id = d.get("customerId") or d.get("customer_id")
+    technician_id = d.get("technicianId") or d.get("technician_id")
+
+    def _parse_optional_int(raw, name: str):
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return None, None
+        try:
+            return int(str(raw).strip()), None
+        except (TypeError, ValueError):
+            return None, f"{name} must be an integer"
+
+    booking_id, err = _parse_optional_int(booking_id, "bookingId")
+    if err:
+        return jsonify({"message": err}), 400
+    customer_id, err = _parse_optional_int(customer_id, "customerId")
+    if err:
+        return jsonify({"message": err}), 400
+    technician_id, err = _parse_optional_int(technician_id, "technicianId")
+    if err:
+        return jsonify({"message": err}), 400
+
+    if booking_id is not None and not _one("SELECT 1 AS ok FROM bookings WHERE booking_id = :id", {"id": booking_id}):
+        return jsonify({"message": "bookingId does not match an existing booking"}), 404
+    if customer_id is not None and not _one("SELECT 1 AS ok FROM users WHERE user_id = :id", {"id": customer_id}):
+        return jsonify({"message": "customerId does not match an existing user"}), 404
+    if technician_id is not None and not _one("SELECT 1 AS ok FROM technician_profiles WHERE technician_id = :id", {"id": technician_id}):
+        return jsonify({"message": "technicianId does not match an existing technician"}), 404
+
+    try:
+        row = _one(
+            """
+            INSERT INTO reviews (booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at)
+            VALUES (:booking_id, :customer_id, :technician_id, :rating, :title, :review_text, :is_active, NOW(), NOW())
+            RETURNING review_id, booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at
+            """,
+            {
+                "booking_id": booking_id,
+                "customer_id": customer_id,
+                "technician_id": technician_id,
+                "rating": rating,
+                "title": d.get("title"),
+                "review_text": d.get("review") or d.get("reviewText"),
+                "is_active": False if d.get("status") == "inactive" else True,
+            },
+        )
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"message": "Invalid review references (booking/customer/technician)"}), 400
     db.session.commit()
     return jsonify({"id": str(row["review_id"]), "message": "Review created"}), 201
 
@@ -1575,6 +1609,36 @@ def update_review(review_id: int):
             return jsonify({"message": "rating must be an integer"}), 400
         if rating < 1 or rating > 5:
             return jsonify({"message": "rating must be between 1 and 5"}), 400
+
+    booking_id = d.get("bookingId") or d.get("booking_id")
+    customer_id = d.get("customerId") or d.get("customer_id")
+    technician_id = d.get("technicianId") or d.get("technician_id")
+
+    def _parse_optional_int(raw, name: str):
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return None, None
+        try:
+            return int(str(raw).strip()), None
+        except (TypeError, ValueError):
+            return None, f"{name} must be an integer"
+
+    booking_id, err = _parse_optional_int(booking_id, "bookingId")
+    if err:
+        return jsonify({"message": err}), 400
+    customer_id, err = _parse_optional_int(customer_id, "customerId")
+    if err:
+        return jsonify({"message": err}), 400
+    technician_id, err = _parse_optional_int(technician_id, "technicianId")
+    if err:
+        return jsonify({"message": err}), 400
+
+    if booking_id is not None and not _one("SELECT 1 AS ok FROM bookings WHERE booking_id = :id", {"id": booking_id}):
+        return jsonify({"message": "bookingId does not match an existing booking"}), 404
+    if customer_id is not None and not _one("SELECT 1 AS ok FROM users WHERE user_id = :id", {"id": customer_id}):
+        return jsonify({"message": "customerId does not match an existing user"}), 404
+    if technician_id is not None and not _one("SELECT 1 AS ok FROM technician_profiles WHERE technician_id = :id", {"id": technician_id}):
+        return jsonify({"message": "technicianId does not match an existing technician"}), 404
+
     _q(
         """
         UPDATE reviews
@@ -1590,9 +1654,9 @@ def update_review(review_id: int):
         """,
         {
             "id": review_id,
-            "booking_id": d.get("bookingId") or d.get("booking_id"),
-            "customer_id": d.get("customerId") or d.get("customer_id"),
-            "technician_id": d.get("technicianId") or d.get("technician_id"),
+            "booking_id": booking_id,
+            "customer_id": customer_id,
+            "technician_id": technician_id,
             "rating": rating,
             "title": d.get("title"),
             "review_text": d.get("review") or d.get("reviewText"),
