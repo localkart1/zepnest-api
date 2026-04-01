@@ -121,7 +121,7 @@ Response `200`:
 ### POST `/api/orders`
 Request:
 ```json
-{"customerId":101,"address":"12 MG Road","status":"pending","bookingItems":[{"serviceId":1,"quantity":1},{"serviceId":2,"quantity":2,"unitPrice":300}]}
+{"customerId":101,"address":"12 MG Road","status":"pending","bookingItems":[{"serviceId":1,"quantity":1,"voiceUrl":"https://cdn/app/voice-1.m4a","videoUrl":"https://cdn/app/video-1.mp4","imageUrl":"https://cdn/app/img-1.jpg","notes":"customer prefers morning slot"},{"serviceId":2,"quantity":2,"unitPrice":300}]}
 ```
 Response `201`:
 ```json
@@ -131,7 +131,7 @@ Response `201`:
 ### GET `/api/orders/{order_id}`
 Response `200`:
 ```json
-{"id":"5001","orderNo":"ORD-5001","customerId":"101","status":"pending","technicianId":null,"totalAmount":1800,"bookingItems":[{"id":"1","serviceId":1,"serviceName":"AC Service","quantity":1,"unitPrice":1200,"totalPrice":1200},{"id":"2","serviceId":2,"serviceName":"Gas Refill","quantity":2,"unitPrice":300,"totalPrice":600}]}
+{"id":"5001","orderNo":"ORD-5001","customerId":"101","status":"pending","technicianId":null,"totalAmount":1800,"bookingItems":[{"id":"1","serviceId":1,"serviceName":"AC Service","quantity":1,"unitPrice":1200,"totalPrice":1200,"notes":"customer prefers morning slot"},{"id":"2","serviceId":2,"serviceName":"Gas Refill","quantity":2,"unitPrice":300,"totalPrice":600,"notes":""}]}
 ```
 
 ### PUT `/api/orders/{order_id}`
@@ -265,6 +265,37 @@ Response `200`:
 {"id":"ref-10","status":"approved","processedBy":"finance_admin","message":"Refund status updated"}
 ```
 
+## Reviews
+
+### GET `/api/reviews?page=1&limit=10&status=active&bookingId=5001`
+Response `200`: paginated reviews list.
+
+### POST `/api/reviews`
+Request:
+```json
+{"bookingId":5001,"customerId":101,"technicianId":11,"rating":5,"title":"Great service","review":"Very professional and on time","status":"active"}
+```
+Response `201`:
+```json
+{"id":"1","message":"Review created"}
+```
+
+### GET `/api/reviews/{review_id}`
+Response `200`:
+```json
+{"id":"1","bookingId":"5001","customerId":"101","technicianId":"11","rating":5,"title":"Great service","review":"Very professional and on time","status":"active","createdAt":"2026-04-01T10:00:00","updatedAt":"2026-04-01T10:00:00"}
+```
+
+### PUT `/api/reviews/{review_id}`
+Request:
+```json
+{"rating":4,"review":"Good service","status":"active"}
+```
+Response `200`: same shape as `GET /api/reviews/{review_id}`.
+
+### DELETE `/api/reviews/{review_id}`
+Response `204`
+
 ## Settings
 
 ### GET `/api/settings/roles`
@@ -305,7 +336,7 @@ Response `200`: subcategory list.
 Headers: `Authorization: Bearer <mobile-jwt>`
 Request:
 ```json
-{"serviceAddress":"12 MG Road","serviceIds":[1,2],"description":"Need quick service","voiceNoteUrl":"https://.../voice.m4a","videoUrl":"https://.../video.mp4"}
+{"serviceAddress":"12 MG Road","serviceIds":[1,2],"description":"Need quick service","voiceNoteUrl":"https://.../voice.m4a","videoUrl":"https://.../video.mp4","imageUrl":"https://.../image.jpg"}
 ```
 Response `201`:
 ```json

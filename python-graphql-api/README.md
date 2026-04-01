@@ -30,6 +30,16 @@ Default base URL: `http://localhost:5002`
 
 All paths below are relative to the server origin. Example: `GET http://localhost:5002/api/customers`.
 
+### Web auth
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/auth/register` | Email/password signup (stores `users.password_hash`) |
+| `POST` | `/api/auth/login` | Email/password login |
+| `GET` | `/api/auth/me` | Current web user (`Authorization: Bearer <token>`) |
+
+---
+
 ### Pagination & filters (list endpoints)
 
 Many list routes accept query parameters:
@@ -41,10 +51,11 @@ Many list routes accept query parameters:
 | `search` | Text search (field varies by resource) |
 | `status` | Filter by status where applicable |
 
-Paginated responses use this shape:
+Paginated responses typically use this shape:
 
 ```json
 {
+  "items": [],
   "data": [],
   "total": 0,
   "page": 1,
@@ -53,7 +64,9 @@ Paginated responses use this shape:
 }
 ```
 
-(`items` is included as an alias of `data` for compatibility.)
+Notes:
+- Most legacy list endpoints include both `items` and `data` (same list) for compatibility.
+- `GET /api/customers` returns `items` (primary) and does **not** include legacy `data`.
 
 ---
 
@@ -107,6 +120,12 @@ There is no dedicated `assets` table in the current schema. List/get return a **
 | `POST` | `/api/orders/assign/:orderId` | Assign technician (`body`: `{ "technicianId" }`) |
 | `POST` | `/api/orders/escalate/:orderId` | Escalate (`body`: `{ "reason", ... }`) |
 
+`POST /api/orders` supports multiple items:
+- Preferred: `bookingItems` array (`serviceId`, optional `quantity`, optional `unitPrice`)
+- Compatibility: `serviceIds` / `serviceId`
+
+Booking items are persisted in `booking_items` with FK to `bookings`.
+
 ---
 
 ### Services & catalog
@@ -145,6 +164,7 @@ There is no dedicated `assets` table in the current schema. List/get return a **
 | `GET` | `/api/enumerations/specializations` | From `technician_profiles` |
 | `GET` | `/api/enumerations/service-categories` | From `services` |
 | `GET` | `/api/enumerations/zip-codes` | From `service_areas` |
+| `GET` | `/api/enumerations/time-slots` | Active slots from `time_slot_master` |
 
 ---
 
@@ -179,6 +199,9 @@ There is no dedicated `assets` table in the current schema. List/get return a **
 ## Mobile API (`/mobile`)
 
 OTP (`/mobile/auth/*`), home categories (`GET /mobile/home`), bookings (`/mobile/bookings`), profile (`GET`/`PATCH /mobile/profile`), addresses (`/mobile/addresses`). Authenticated routes use `Authorization: Bearer <accessToken>`.
+
+Address storage is in common `addresses` table (fallback read/write to `customer_addresses` for older DBs).
+`PATCH /mobile/profile` can upsert default address by sending `address` (or `defaultAddress`) object.
 
 ### Voice note and video storage (AWS S3)
 
@@ -241,6 +264,18 @@ GraphQL maps to **SQLAlchemy models** in `api/models/`, not the raw-SQL Postgres
 ```bash
 ./venv/bin/python scripts/compare_db_schema.py
 ```
+
+---
+
+## SQL setup scripts
+
+Run as needed on PostgreSQL:
+
+- `scripts/create_mobile_otp_table.sql`
+- `scripts/create_audit_logs_table.sql`
+- `scripts/create_booking_items_table.sql`
+- `scripts/create_addresses_table.sql`
+- `scripts/create_time_slot_master_table.sql`
 
 ---
 

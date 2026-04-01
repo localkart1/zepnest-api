@@ -367,6 +367,7 @@ def main() -> None:
             "description": {"type": "string"},
             "voiceNoteUrl": {"type": "string"},
             "videoUrl": {"type": "string"},
+            "imageUrl": {"type": "string"},
             "customerNotes": {"type": "string"},
         },
     }

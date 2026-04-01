@@ -219,6 +219,7 @@ def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict
         rows = _q(
             f"""
             SELECT bi.id, bi.booking_id, bi.service_id, bi.quantity, bi.unit_price, bi.total_price,
+                   bi.voice_url, bi.video_url, bi.image_url, bi.notes,
                    s.name AS service_name, s.description AS service_description
             FROM booking_items bi
             LEFT JOIN services s ON s.service_id = bi.service_id
@@ -244,6 +245,10 @@ def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict
                 "unitPrice": float(r["unit_price"] or 0),
                 "totalPrice": float(r["total_price"] or 0),
                 "basePrice": float(r["unit_price"] or 0),
+                "voiceUrl": r.get("voice_url") or None,
+                "videoUrl": r.get("video_url") or None,
+                "imageUrl": r.get("image_url") or None,
+                "notes": r.get("notes") or "",
             }
         )
     return out
@@ -639,6 +644,7 @@ def create_mobile_booking():
     description = (data.get("description") or "").strip()
     voice = (data.get("voiceNoteUrl") or data.get("voiceUrl") or "").strip()
     video = (data.get("videoUrl") or "").strip()
+    image = (data.get("imageUrl") or "").strip()
     extra_notes = (data.get("customerNotes") or data.get("notes") or "").strip()
 
     payload = {
@@ -646,6 +652,7 @@ def create_mobile_booking():
         "description": description,
         "voiceNoteUrl": voice,
         "videoUrl": video,
+        "imageUrl": image,
         "customerNotes": extra_notes,
     }
     notes_text = MOBILE_JSON_PREFIX + json.dumps(payload, ensure_ascii=False)
@@ -665,10 +672,19 @@ def create_mobile_booking():
         unit = float(s["base_price"] or 0)
         _q(
             """
-            INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, created_at, updated_at)
-            VALUES (:bid, :sid, 1, :unit, :tot, NOW(), NOW())
+            INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, voice_url, video_url, image_url, notes, created_at, updated_at)
+            VALUES (:bid, :sid, 1, :unit, :tot, :voice_url, :video_url, :image_url, :notes, NOW(), NOW())
             """,
-            {"bid": row["booking_id"], "sid": s["service_id"], "unit": unit, "tot": unit},
+            {
+                "bid": row["booking_id"],
+                "sid": s["service_id"],
+                "unit": unit,
+                "tot": unit,
+                "voice_url": voice or None,
+                "video_url": video or None,
+                "image_url": image or None,
+                "notes": extra_notes or None,
+            },
         )
     db.session.commit()
     rdict = dict(row)

@@ -75,6 +75,10 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "quantity",
             "unit_price",
             "total_price",
+            "voice_url",
+            "video_url",
+            "image_url",
+            "notes",
             "created_at",
             "updated_at",
         }
@@ -225,6 +229,20 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "reviews": frozenset(
+        {
+            "review_id",
+            "booking_id",
+            "customer_id",
+            "technician_id",
+            "rating",
+            "title",
+            "review_text",
+            "is_active",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "audit_logs": frozenset(
         {
             "id",
@@ -328,6 +346,10 @@ API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "quantity",
             "unit_price",
             "total_price",
+            "voice_url",
+            "video_url",
+            "image_url",
+            "notes",
             "created_at",
             "updated_at",
         }

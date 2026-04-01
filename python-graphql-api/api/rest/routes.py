@@ -103,6 +103,7 @@ def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict
         rows = _q(
             f"""
             SELECT bi.id, bi.booking_id, bi.service_id, bi.quantity, bi.unit_price, bi.total_price,
+                   bi.voice_url, bi.video_url, bi.image_url, bi.notes,
                    s.name AS service_name, s.description AS service_description
             FROM booking_items bi
             LEFT JOIN services s ON s.service_id = bi.service_id
@@ -127,6 +128,10 @@ def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict
                 "quantity": int(r["quantity"] or 1),
                 "unitPrice": float(r["unit_price"] or 0),
                 "totalPrice": float(r["total_price"] or 0),
+                "voiceUrl": r.get("voice_url") or None,
+                "videoUrl": r.get("video_url") or None,
+                "imageUrl": r.get("image_url") or None,
+                "notes": r.get("notes") or "",
             }
         )
     return out
@@ -706,22 +711,27 @@ def create_order():
                 except (TypeError, ValueError):
                     unit = float(by_sid[sid]["base_price"] or 0)
                 total_price = round(unit * qty, 2)
+                voice_url = (it.get("voiceUrl") or it.get("voiceNoteUrl") or "").strip() or None
+                video_url = (it.get("videoUrl") or "").strip() or None
+                image_url = (it.get("imageUrl") or "").strip() or None
+                notes = (it.get("notes") or it.get("customerNotes") or d.get("customerNotes") or "").strip() or None
                 _q(
                     """
-                    INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, created_at, updated_at)
-                    VALUES (:bid, :sid, :qty, :unit, :tot, NOW(), NOW())
+                    INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, voice_url, video_url, image_url, notes, created_at, updated_at)
+                    VALUES (:bid, :sid, :qty, :unit, :tot, :voice_url, :video_url, :image_url, :notes, NOW(), NOW())
                     """,
-                    {"bid": row["booking_id"], "sid": sid, "qty": qty, "unit": unit, "tot": total_price},
+                    {"bid": row["booking_id"], "sid": sid, "qty": qty, "unit": unit, "tot": total_price, "voice_url": voice_url, "video_url": video_url, "image_url": image_url, "notes": notes},
                 )
         else:
             for sid in item_service_ids:
                 unit = float(by_sid[sid]["base_price"] or 0)
+                notes = (d.get("customerNotes") or "").strip() or None
                 _q(
                     """
-                    INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, created_at, updated_at)
-                    VALUES (:bid, :sid, 1, :unit, :tot, NOW(), NOW())
+                    INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, voice_url, video_url, image_url, notes, created_at, updated_at)
+                    VALUES (:bid, :sid, 1, :unit, :tot, NULL, NULL, NULL, :notes, NOW(), NOW())
                     """,
-                    {"bid": row["booking_id"], "sid": sid, "unit": unit, "tot": unit},
+                    {"bid": row["booking_id"], "sid": sid, "unit": unit, "tot": unit, "notes": notes},
                 )
 
     db.session.commit()
@@ -1448,6 +1458,156 @@ def process_refund(refund_id: str):
     _q("UPDATE payments SET status=:status WHERE payment_id=:id", {"status": target_status, "id": pid})
     db.session.commit()
     return jsonify({"id": refund_id, "status": data.get("status", "approved"), "processedBy": data.get("processedBy"), "message": "Refund status updated"})
+
+
+@rest_bp.get("/reviews")
+def list_reviews():
+    page = _int_param("page", 1)
+    limit = _int_param("limit", 10)
+    search = request.args.get("search", "").strip()
+    status = request.args.get("status")
+    booking_id = request.args.get("bookingId") or request.args.get("booking_id")
+    customer_id = request.args.get("customerId") or request.args.get("customer_id")
+    technician_id = request.args.get("technicianId") or request.args.get("technician_id")
+    rows = _q(
+        """
+        SELECT review_id, booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at
+        FROM reviews
+        WHERE (:status IS NULL OR (:status='active' AND is_active=true) OR (:status='inactive' AND is_active=false))
+          AND (:booking_id IS NULL OR booking_id = CAST(:booking_id AS INTEGER))
+          AND (:customer_id IS NULL OR customer_id = CAST(:customer_id AS INTEGER))
+          AND (:technician_id IS NULL OR technician_id = CAST(:technician_id AS INTEGER))
+          AND (:search='' OR LOWER(COALESCE(title,'')) LIKE LOWER(:like_search) OR LOWER(COALESCE(review_text,'')) LIKE LOWER(:like_search))
+        ORDER BY review_id DESC
+        """,
+        {
+            "status": status,
+            "booking_id": booking_id,
+            "customer_id": customer_id,
+            "technician_id": technician_id,
+            "search": search,
+            "like_search": f"%{search}%",
+        },
+    )
+    mapped = [
+        {
+            "id": str(r["review_id"]),
+            "bookingId": str(r["booking_id"]) if r["booking_id"] is not None else "",
+            "customerId": str(r["customer_id"]) if r["customer_id"] is not None else "",
+            "technicianId": str(r["technician_id"]) if r["technician_id"] is not None else "",
+            "rating": int(r["rating"] or 0),
+            "title": r["title"] or "",
+            "review": r["review_text"] or "",
+            "status": "active" if r["is_active"] else "inactive",
+            "createdAt": r["created_at"].isoformat() if r["created_at"] else None,
+            "updatedAt": r["updated_at"].isoformat() if r["updated_at"] else None,
+        }
+        for r in rows
+    ]
+    return jsonify(_paginate(mapped, page, limit))
+
+
+@rest_bp.get("/reviews/<int:review_id>")
+def get_review(review_id: int):
+    r = _one(
+        """
+        SELECT review_id, booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at
+        FROM reviews WHERE review_id = :id
+        """,
+        {"id": review_id},
+    )
+    if not r:
+        return jsonify({"message": "Review not found"}), 404
+    return jsonify(
+        {
+            "id": str(r["review_id"]),
+            "bookingId": str(r["booking_id"]) if r["booking_id"] is not None else "",
+            "customerId": str(r["customer_id"]) if r["customer_id"] is not None else "",
+            "technicianId": str(r["technician_id"]) if r["technician_id"] is not None else "",
+            "rating": int(r["rating"] or 0),
+            "title": r["title"] or "",
+            "review": r["review_text"] or "",
+            "status": "active" if r["is_active"] else "inactive",
+            "createdAt": r["created_at"].isoformat() if r["created_at"] else None,
+            "updatedAt": r["updated_at"].isoformat() if r["updated_at"] else None,
+        }
+    )
+
+
+@rest_bp.post("/reviews")
+def create_review():
+    d = request.get_json(silent=True) or {}
+    try:
+        rating = int(d.get("rating", 0))
+    except (TypeError, ValueError):
+        return jsonify({"message": "rating must be an integer"}), 400
+    if rating < 1 or rating > 5:
+        return jsonify({"message": "rating must be between 1 and 5"}), 400
+
+    row = _one(
+        """
+        INSERT INTO reviews (booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at)
+        VALUES (:booking_id, :customer_id, :technician_id, :rating, :title, :review_text, :is_active, NOW(), NOW())
+        RETURNING review_id, booking_id, customer_id, technician_id, rating, title, review_text, is_active, created_at, updated_at
+        """,
+        {
+            "booking_id": d.get("bookingId") or d.get("booking_id"),
+            "customer_id": d.get("customerId") or d.get("customer_id"),
+            "technician_id": d.get("technicianId") or d.get("technician_id"),
+            "rating": rating,
+            "title": d.get("title"),
+            "review_text": d.get("review") or d.get("reviewText"),
+            "is_active": False if d.get("status") == "inactive" else True,
+        },
+    )
+    db.session.commit()
+    return jsonify({"id": str(row["review_id"]), "message": "Review created"}), 201
+
+
+@rest_bp.put("/reviews/<int:review_id>")
+def update_review(review_id: int):
+    d = request.get_json(silent=True) or {}
+    rating = d.get("rating")
+    if rating is not None:
+        try:
+            rating = int(rating)
+        except (TypeError, ValueError):
+            return jsonify({"message": "rating must be an integer"}), 400
+        if rating < 1 or rating > 5:
+            return jsonify({"message": "rating must be between 1 and 5"}), 400
+    _q(
+        """
+        UPDATE reviews
+        SET booking_id = COALESCE(:booking_id, booking_id),
+            customer_id = COALESCE(:customer_id, customer_id),
+            technician_id = COALESCE(:technician_id, technician_id),
+            rating = COALESCE(:rating, rating),
+            title = COALESCE(:title, title),
+            review_text = COALESCE(:review_text, review_text),
+            is_active = COALESCE(:is_active, is_active),
+            updated_at = NOW()
+        WHERE review_id = :id
+        """,
+        {
+            "id": review_id,
+            "booking_id": d.get("bookingId") or d.get("booking_id"),
+            "customer_id": d.get("customerId") or d.get("customer_id"),
+            "technician_id": d.get("technicianId") or d.get("technician_id"),
+            "rating": rating,
+            "title": d.get("title"),
+            "review_text": d.get("review") or d.get("reviewText"),
+            "is_active": (False if d.get("status") == "inactive" else True) if "status" in d else None,
+        },
+    )
+    db.session.commit()
+    return get_review(review_id)
+
+
+@rest_bp.delete("/reviews/<int:review_id>")
+def delete_review(review_id: int):
+    _q("DELETE FROM reviews WHERE review_id = :id", {"id": review_id})
+    db.session.commit()
+    return "", 204
 
 
 @rest_bp.get("/settings/roles")
