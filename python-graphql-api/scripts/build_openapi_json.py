@@ -172,6 +172,7 @@ MOBILE_PATHS = {
         "patch": {
             "tags": ["Mobile — Profile"],
             "summary": "Update profile fields",
+            "description": "You can pass `address` (or `defaultAddress`) object to upsert the user's default address in the common `addresses` table.",
             "security": [{"bearerAuth": []}],
             "requestBody": {
                 "content": {
@@ -182,6 +183,20 @@ MOBILE_PATHS = {
                                 "firstName": {"type": "string"},
                                 "lastName": {"type": "string"},
                                 "email": {"type": "string"},
+                                "address": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {"type": "string"},
+                                        "line1": {"type": "string"},
+                                        "line2": {"type": "string"},
+                                        "city": {"type": "string"},
+                                        "state": {"type": "string"},
+                                        "zipCode": {"type": "string"},
+                                        "country": {"type": "string"},
+                                        "addressType": {"type": "string"},
+                                    },
+                                },
+                                "defaultAddress": {"type": "object"},
                             },
                         }
                     }
@@ -204,7 +219,20 @@ MOBILE_PATHS = {
             "requestBody": {
                 "content": {
                     "application/json": {
-                        "schema": {"type": "object", "properties": {"line1": {"type": "string"}}}
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "line1": {"type": "string"},
+                                "line2": {"type": "string"},
+                                "city": {"type": "string"},
+                                "state": {"type": "string"},
+                                "zipCode": {"type": "string"},
+                                "country": {"type": "string"},
+                                "addressType": {"type": "string"},
+                                "isDefault": {"type": "boolean"},
+                            },
+                        }
                     }
                 }
             },

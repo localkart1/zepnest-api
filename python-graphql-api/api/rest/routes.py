@@ -26,13 +26,63 @@ def _int_param(name: str, default: int) -> int:
         return default
 
 
-def _paginate(rows, page: int, limit: int):
+def _paginate(rows, page: int, limit: int, *, include_legacy_data: bool = True):
     total = len(rows)
     start = (page - 1) * limit
     end = start + limit
     total_pages = (total + limit - 1) // limit if limit > 0 else 0
-    data = rows[start:end]
-    return {"data": data, "items": data, "total": total, "page": page, "limit": limit, "totalPages": total_pages}
+    items = rows[start:end]
+    body = {"items": items, "total": total, "page": page, "limit": limit, "totalPages": total_pages}
+    if include_legacy_data:
+        body["data"] = items
+    return body
+
+
+def _addresses_by_user_ids(user_ids: list[int]) -> dict[int, list[dict]]:
+    ids = [int(x) for x in user_ids if x is not None]
+    if not ids:
+        return {}
+    placeholders = ", ".join(f":uid_{i}" for i in range(len(ids)))
+    params = {f"uid_{i}": ids[i] for i in range(len(ids))}
+    try:
+        rows = _q(
+            f"""
+            SELECT user_id, id, label, line1, line2, city, state, zip_code, country, is_default
+            FROM addresses
+            WHERE user_id IN ({placeholders})
+            ORDER BY is_default DESC, id DESC
+            """,
+            params,
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        rows = _q(
+            f"""
+            SELECT user_id, id, label, line1, line2, city, state, zip_code, country, is_default
+            FROM customer_addresses
+            WHERE user_id IN ({placeholders})
+            ORDER BY is_default DESC, id DESC
+            """,
+            params,
+        )
+    out: dict[int, list[dict]] = {}
+    for r in rows:
+        uid = int(r["user_id"])
+        out.setdefault(uid, []).append(
+            {
+                "id": str(r["id"]),
+                "label": r["label"] or "",
+                "line1": r["line1"] or "",
+                "line2": r["line2"] or "",
+                "city": r["city"] or "",
+                "state": r["state"] or "",
+                "zipCode": r["zip_code"] or "",
+                "country": r["country"] or "",
+                "isDefault": bool(r["is_default"]),
+            }
+        )
+    return out
 
 
 def _q(sql: str, params=None):
@@ -41,6 +91,90 @@ def _q(sql: str, params=None):
 
 def _one(sql: str, params=None):
     return db.session.execute(text(sql), params or {}).mappings().first()
+
+
+def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict]]:
+    ids = [int(x) for x in booking_ids if x is not None]
+    if not ids:
+        return {}
+    placeholders = ", ".join(f":bid_{i}" for i in range(len(ids)))
+    params = {f"bid_{i}": ids[i] for i in range(len(ids))}
+    try:
+        rows = _q(
+            f"""
+            SELECT bi.id, bi.booking_id, bi.service_id, bi.quantity, bi.unit_price, bi.total_price,
+                   s.name AS service_name, s.description AS service_description
+            FROM booking_items bi
+            LEFT JOIN services s ON s.service_id = bi.service_id
+            WHERE bi.booking_id IN ({placeholders})
+            ORDER BY bi.id ASC
+            """,
+            params,
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return {}
+        raise
+    out: dict[int, list[dict]] = {}
+    for r in rows:
+        bid = int(r["booking_id"])
+        out.setdefault(bid, []).append(
+            {
+                "id": str(r["id"]),
+                "serviceId": int(r["service_id"]),
+                "serviceName": r["service_name"] or "",
+                "description": r["service_description"] or "",
+                "quantity": int(r["quantity"] or 1),
+                "unitPrice": float(r["unit_price"] or 0),
+                "totalPrice": float(r["total_price"] or 0),
+            }
+        )
+    return out
+
+
+def _collect_order_item_service_ids(payload: dict) -> list[int]:
+    out: list[int] = []
+    booking_items = payload.get("bookingItems")
+    if isinstance(booking_items, list):
+        for it in booking_items:
+            if not isinstance(it, dict):
+                continue
+            sid = it.get("serviceId")
+            if sid is None:
+                sid = it.get("service_id")
+            try:
+                out.append(int(sid))
+            except (TypeError, ValueError):
+                continue
+    if out:
+        # Preserve order, dedupe.
+        seen = set()
+        uniq = []
+        for x in out:
+            if x not in seen:
+                seen.add(x)
+                uniq.append(x)
+        return uniq
+    service_ids = payload.get("serviceIds")
+    if isinstance(service_ids, list):
+        tmp = []
+        for sid in service_ids:
+            try:
+                tmp.append(int(sid))
+            except (TypeError, ValueError):
+                continue
+        seen = set()
+        uniq = []
+        for x in tmp:
+            if x not in seen:
+                seen.add(x)
+                uniq.append(x)
+        return uniq
+    sid = payload.get("serviceId")
+    try:
+        return [int(sid)] if sid is not None else []
+    except (TypeError, ValueError):
+        return []
 
 
 def _resolve_category_for_service_write(d: dict) -> tuple:
@@ -79,6 +213,20 @@ def list_customers():
     search = request.args.get("search", "").strip()
     status = request.args.get("status")
     customer_user_type = request.args.get("customerUserType")
+    sort_by_raw = (request.args.get("sortBy") or request.args.get("sortField") or "createdAt").strip()
+    sort_order = (request.args.get("sortOrder") or "desc").strip().lower()
+    sort_by_map = {
+        "id": "user_id",
+        "createdat": "created_at",
+        "updatedat": "updated_at",
+        "firstname": "first_name",
+        "lastname": "last_name",
+        "email": "email",
+        "phone": "phone",
+    }
+    sort_by = sort_by_map.get(sort_by_raw.replace("_", "").lower(), "created_at")
+    sort_dir = "ASC" if sort_order == "asc" else "DESC"
+
     rows = _q(
         """
         SELECT user_id, first_name, last_name, email, phone, user_type, loyalty_points, is_active, created_at, updated_at
@@ -88,10 +236,11 @@ def list_customers():
           AND (:customer_user_type IS NULL OR user_type = :customer_user_type)
           AND (:search = '' OR LOWER(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) LIKE LOWER(:like_search)
                OR LOWER(COALESCE(email,'')) LIKE LOWER(:like_search) OR COALESCE(phone,'') LIKE :like_search)
-        ORDER BY user_id DESC
+        ORDER BY """ + sort_by + " " + sort_dir + """, user_id DESC
         """,
         {"status": status, "customer_user_type": customer_user_type, "search": search, "like_search": f"%{search}%"},
     )
+    addresses = _addresses_by_user_ids([int(r["user_id"]) for r in rows])
     mapped = [
         {
             "id": str(r["user_id"]),
@@ -99,7 +248,7 @@ def list_customers():
             "lastName": r["last_name"] or "",
             "email": r["email"],
             "phone": r["phone"] or "",
-            "addresses": [],
+            "addresses": addresses.get(int(r["user_id"]), []),
             "status": "active" if r["is_active"] else "inactive",
             "tags": [],
             "customerUserType": "subscription",
@@ -113,7 +262,7 @@ def list_customers():
         }
         for r in rows
     ]
-    return jsonify(_paginate(mapped, page, limit))
+    return jsonify(_paginate(mapped, page, limit, include_legacy_data=False))
 
 
 @rest_bp.get("/customers/<int:customer_id>")
@@ -127,6 +276,7 @@ def get_customer(customer_id: int):
     )
     if not r:
         return jsonify({"message": "Customer not found"}), 404
+    addresses = _addresses_by_user_ids([int(r["user_id"])])
     return jsonify(
         {
             "id": str(r["user_id"]),
@@ -134,7 +284,7 @@ def get_customer(customer_id: int):
             "lastName": r["last_name"] or "",
             "email": r["email"],
             "phone": r["phone"] or "",
-            "addresses": [],
+            "addresses": addresses.get(int(r["user_id"]), []),
             "status": "active" if r["is_active"] else "inactive",
             "tags": [],
             "customerUserType": "subscription",
@@ -203,7 +353,7 @@ def list_technicians():
     status = request.args.get("status")
     rows = _q(
         """
-        SELECT tp.technician_id, u.first_name, u.last_name, u.email, u.phone, tp.specialization, tp.status,
+        SELECT tp.technician_id, u.user_id, u.first_name, u.last_name, u.email, u.phone, tp.specialization, tp.status,
                tp.experience_years, tp.certification, tp.rating, tp.total_reviews, tp.created_at
         FROM technician_profiles tp
         JOIN users u ON u.user_id = tp.user_id
@@ -215,6 +365,7 @@ def list_technicians():
         """,
         {"status": status, "search": search, "like_search": f"%{search}%"},
     )
+    addresses = _addresses_by_user_ids([int(r["user_id"]) for r in rows])
     mapped = [
         {
             "id": str(r["technician_id"]),
@@ -225,6 +376,7 @@ def list_technicians():
             "specialization": [r["specialization"]] if r["specialization"] else [],
             "experience": r["experience_years"] or 0,
             "status": r["status"] or "available",
+            "addresses": addresses.get(int(r["user_id"]), []),
             "rating": float(r["rating"] or 0),
             "totalReviews": r["total_reviews"] or 0,
             "certifications": [r["certification"]] if r["certification"] else [],
@@ -406,6 +558,15 @@ def list_orders():
     limit = _int_param("limit", 10)
     search = request.args.get("search", "").strip()
     status = request.args.get("status")
+    customer_id_raw = request.args.get("customerId")
+    if customer_id_raw is None:
+        customer_id_raw = request.args.get("customer_id")
+    customer_id = None
+    if customer_id_raw is not None and str(customer_id_raw).strip() != "":
+        try:
+            customer_id = int(str(customer_id_raw).strip())
+        except (TypeError, ValueError):
+            return jsonify({"message": "customerId must be an integer"}), 400
     rows = _q(
         """
         SELECT b.booking_id, b.booking_number, b.status, b.total_amount, b.created_at, b.updated_at, b.technician_id,
@@ -413,17 +574,19 @@ def list_orders():
         FROM bookings b
         LEFT JOIN users u ON u.user_id = b.customer_id
         WHERE (:status IS NULL OR b.status=:status)
+          AND (:customer_id IS NULL OR b.customer_id = :customer_id)
           AND (:search='' OR LOWER(COALESCE(b.booking_number,'')) LIKE LOWER(:like_search)
                OR LOWER(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')) LIKE LOWER(:like_search)
                OR COALESCE(u.phone,'') LIKE :like_search)
         ORDER BY b.booking_id DESC
         """,
-        {"status": status, "search": search, "like_search": f"%{search}%"},
+        {"status": status, "customer_id": customer_id, "search": search, "like_search": f"%{search}%"},
     )
     mapped = [
         {
             "id": str(r["booking_id"]),
             "orderNo": r["booking_number"],
+            "customerId": str(r["customer_id"]) if r["customer_id"] else "",
             "customerName": f"{r['first_name'] or ''} {r['last_name'] or ''}".strip(),
             "phone": r["phone"] or "",
             "status": r["status"],
@@ -436,15 +599,19 @@ def list_orders():
         }
         for r in rows
     ]
+    by_booking = _booking_items_by_booking_ids([int(r["booking_id"]) for r in rows])
+    for m in mapped:
+        m["bookingItems"] = by_booking.get(int(m["id"]), [])
     return jsonify(_paginate(mapped, page, limit))
 
 
 @rest_bp.get("/orders/<int:order_id>")
 def get_order(order_id: int):
-    row = _one("SELECT booking_id, booking_number, status, technician_id, total_amount, created_at, updated_at FROM bookings WHERE booking_id=:id", {"id": order_id})
+    row = _one("SELECT booking_id, booking_number, customer_id, status, technician_id, total_amount, created_at, updated_at FROM bookings WHERE booking_id=:id", {"id": order_id})
     if not row:
         return jsonify({"message": "Order not found"}), 404
-    return jsonify({"id": str(row["booking_id"]), "orderNo": row["booking_number"], "status": row["status"], "technicianId": str(row["technician_id"]) if row["technician_id"] else None, "totalAmount": float(row["total_amount"] or 0), "createdAt": row["created_at"].isoformat() if row["created_at"] else None, "updatedAt": row["updated_at"].isoformat() if row["updated_at"] else None})
+    items = _booking_items_by_booking_ids([int(row["booking_id"])]).get(int(row["booking_id"]), [])
+    return jsonify({"id": str(row["booking_id"]), "orderNo": row["booking_number"], "customerId": str(row["customer_id"]) if row["customer_id"] else "", "status": row["status"], "technicianId": str(row["technician_id"]) if row["technician_id"] else None, "totalAmount": float(row["total_amount"] or 0), "bookingItems": items, "createdAt": row["created_at"].isoformat() if row["created_at"] else None, "updatedAt": row["updated_at"].isoformat() if row["updated_at"] else None})
 
 
 @rest_bp.post("/orders")
@@ -475,6 +642,20 @@ def create_order():
         except (TypeError, ValueError):
             return jsonify({"message": "technicianId must be an integer"}), 400
 
+    item_service_ids = _collect_order_item_service_ids(d)
+    service_rows = []
+    by_sid = {}
+    if item_service_ids:
+        ph = ",".join([f":s{i}" for i in range(len(item_service_ids))])
+        sparams = {f"s{i}": item_service_ids[i] for i in range(len(item_service_ids))}
+        service_rows = _q(
+            f"SELECT service_id, base_price, name, description FROM services WHERE service_id IN ({ph})",
+            sparams,
+        )
+        by_sid = {int(r["service_id"]): r for r in service_rows}
+        if len(by_sid) != len(item_service_ids):
+            return jsonify({"message": "One or more serviceIds were not found"}), 404
+
     number = d.get("orderNo") or f"ORD-{int(datetime.utcnow().timestamp())}"
     row = _one(
         """
@@ -500,6 +681,49 @@ def create_order():
             "cn": d.get("customerNotes"),
         },
     )
+    if item_service_ids:
+        booking_items_raw = d.get("bookingItems") if isinstance(d.get("bookingItems"), list) else None
+        if booking_items_raw:
+            for it in booking_items_raw:
+                if not isinstance(it, dict):
+                    continue
+                try:
+                    sid = int(it.get("serviceId", it.get("service_id")))
+                except (TypeError, ValueError):
+                    continue
+                if sid not in by_sid:
+                    continue
+                qty = it.get("quantity", 1)
+                try:
+                    qty = int(qty)
+                except (TypeError, ValueError):
+                    qty = 1
+                if qty < 1:
+                    qty = 1
+                unit = it.get("unitPrice")
+                try:
+                    unit = float(unit) if unit is not None else float(by_sid[sid]["base_price"] or 0)
+                except (TypeError, ValueError):
+                    unit = float(by_sid[sid]["base_price"] or 0)
+                total_price = round(unit * qty, 2)
+                _q(
+                    """
+                    INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, created_at, updated_at)
+                    VALUES (:bid, :sid, :qty, :unit, :tot, NOW(), NOW())
+                    """,
+                    {"bid": row["booking_id"], "sid": sid, "qty": qty, "unit": unit, "tot": total_price},
+                )
+        else:
+            for sid in item_service_ids:
+                unit = float(by_sid[sid]["base_price"] or 0)
+                _q(
+                    """
+                    INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, created_at, updated_at)
+                    VALUES (:bid, :sid, 1, :unit, :tot, NOW(), NOW())
+                    """,
+                    {"bid": row["booking_id"], "sid": sid, "unit": unit, "tot": unit},
+                )
+
     db.session.commit()
     return (
         jsonify(
@@ -524,6 +748,7 @@ def update_order(order_id: int):
 
 @rest_bp.delete("/orders/<int:order_id>")
 def delete_order(order_id: int):
+    _q("DELETE FROM booking_items WHERE booking_id=:id", {"id": order_id})
     _q("DELETE FROM bookings WHERE booking_id=:id", {"id": order_id})
     db.session.commit()
     return "", 204
@@ -1059,6 +1284,28 @@ def enum_service_categories():
 def enum_zip_codes():
     rows = _q("SELECT DISTINCT zipcode FROM service_areas WHERE zipcode IS NOT NULL ORDER BY zipcode")
     return jsonify([{"value": r["zipcode"], "label": r["zipcode"]} for r in rows])
+
+
+@rest_bp.get("/enumerations/time-slots")
+def enum_time_slots():
+    rows = _q(
+        """
+        SELECT id, time_slot, active
+        FROM time_slot_master
+        WHERE active = 'Y'
+        ORDER BY id ASC
+        """
+    )
+    return jsonify(
+        [
+            {
+                "id": str(r["id"]),
+                "timeSlot": r["time_slot"],
+                "active": r["active"],
+            }
+            for r in rows
+        ]
+    )
 
 
 @rest_bp.get("/dashboard/stats")

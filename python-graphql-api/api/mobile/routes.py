@@ -2,7 +2,7 @@
 Mobile app API: OTP auth, home (categories + services), bookings (multi-service + media),
 profile, addresses.
 Uses existing users / services / bookings tables; OTP in mobile_otp_sessions;
-addresses in customer_addresses.
+addresses in common ``addresses`` table (fallback: ``customer_addresses``).
 
 Voice notes and video: store the files in AWS S3 (or compatible storage). This API only
 persists HTTPS URLs (voiceNoteUrl, videoUrl) on the booking — binaries are not uploaded here.
@@ -209,11 +209,54 @@ def _resolve_services_for_booking(notes: str | None) -> tuple[list[dict], str]:
     return [], note_display
 
 
-def _booking_to_response(r: dict) -> dict:
+def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict]]:
+    ids = [int(x) for x in booking_ids if x is not None]
+    if not ids:
+        return {}
+    placeholders = ", ".join(f":bid_{i}" for i in range(len(ids)))
+    params = {f"bid_{i}": ids[i] for i in range(len(ids))}
+    try:
+        rows = _q(
+            f"""
+            SELECT bi.id, bi.booking_id, bi.service_id, bi.quantity, bi.unit_price, bi.total_price,
+                   s.name AS service_name, s.description AS service_description
+            FROM booking_items bi
+            LEFT JOIN services s ON s.service_id = bi.service_id
+            WHERE bi.booking_id IN ({placeholders})
+            ORDER BY bi.id ASC
+            """,
+            params,
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return {}
+        raise
+    out: dict[int, list[dict]] = {}
+    for r in rows:
+        bid = int(r["booking_id"])
+        out.setdefault(bid, []).append(
+            {
+                "id": str(r["id"]),
+                "serviceId": int(r["service_id"]),
+                "name": r["service_name"] or "",
+                "description": r["service_description"] or "",
+                "quantity": int(r["quantity"] or 1),
+                "unitPrice": float(r["unit_price"] or 0),
+                "totalPrice": float(r["total_price"] or 0),
+                "basePrice": float(r["unit_price"] or 0),
+            }
+        )
+    return out
+
+
+def _booking_to_response(r: dict, booking_items: list[dict] | None = None) -> dict:
     """Map bookings row + customer_notes to API object."""
     notes = r.get("customer_notes")
     payload = _parse_mobile_json_notes(notes)
-    services, legacy_note = _resolve_services_for_booking(notes)
+    if booking_items is None:
+        services, legacy_note = _resolve_services_for_booking(notes)
+    else:
+        services, legacy_note = booking_items, ""
 
     if payload:
         desc = (payload.get("description") or "").strip()
@@ -618,9 +661,19 @@ def create_mobile_booking():
         """,
         {"n": number, "c": g.mobile_user_id, "a": address, "st": DEFAULT_BOOKING_STATUS, "sub": total, "tot": total, "cn": notes_text},
     )
+    for s in ordered:
+        unit = float(s["base_price"] or 0)
+        _q(
+            """
+            INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, created_at, updated_at)
+            VALUES (:bid, :sid, 1, :unit, :tot, NOW(), NOW())
+            """,
+            {"bid": row["booking_id"], "sid": s["service_id"], "unit": unit, "tot": unit},
+        )
     db.session.commit()
     rdict = dict(row)
-    body = _booking_to_response(rdict)
+    by_booking = _booking_items_by_booking_ids([int(row["booking_id"])])
+    body = _booking_to_response(rdict, by_booking.get(int(row["booking_id"])))
     return jsonify(body), 201
 
 
@@ -642,7 +695,8 @@ def list_mobile_bookings():
         """,
         {"cid": g.mobile_user_id, "lim": limit, "off": offset},
     )
-    out = [_booking_to_response(dict(r)) for r in rows]
+    by_booking = _booking_items_by_booking_ids([int(r["booking_id"]) for r in rows])
+    out = [_booking_to_response(dict(r), by_booking.get(int(r["booking_id"]))) for r in rows]
 
     total_row = _one(
         "SELECT COUNT(*) AS c FROM bookings WHERE customer_id = :cid",
@@ -675,7 +729,8 @@ def get_mobile_booking(booking_id: int):
     )
     if not r:
         return jsonify({"message": "Booking not found"}), 404
-    return jsonify(_booking_to_response(dict(r))), 200
+    by_booking = _booking_items_by_booking_ids([int(r["booking_id"])])
+    return jsonify(_booking_to_response(dict(r), by_booking.get(int(r["booking_id"])))), 200
 
 
 def _address_row_to_dict(r) -> dict:
@@ -694,6 +749,105 @@ def _address_row_to_dict(r) -> dict:
     }
 
 
+def _list_user_addresses(user_id: int):
+    try:
+        return _q(
+            """
+            SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            FROM addresses WHERE user_id = :uid ORDER BY is_default DESC, id DESC
+            """,
+            {"uid": user_id},
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        return _q(
+            """
+            SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            FROM customer_addresses WHERE user_id = :uid ORDER BY is_default DESC, id DESC
+            """,
+            {"uid": user_id},
+        )
+
+
+def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
+    addr = data.get("address")
+    if not isinstance(addr, dict):
+        addr = data.get("defaultAddress")
+    if not isinstance(addr, dict):
+        return
+    line1 = (addr.get("line1") or addr.get("addressLine1") or "").strip()
+    if not line1:
+        return
+    params = {
+        "uid": user_id,
+        "label": (addr.get("label") or "Home").strip() or "Home",
+        "l1": line1,
+        "l2": (addr.get("line2") or addr.get("addressLine2") or "").strip() or None,
+        "city": (addr.get("city") or "").strip() or None,
+        "state": (addr.get("state") or "").strip() or None,
+        "zip": (addr.get("zipCode") or addr.get("zip") or "").strip() or None,
+        "country": (addr.get("country") or "India").strip() or "India",
+        "atype": (addr.get("addressType") or "home").strip() or "home",
+    }
+    try:
+        _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
+        existing = _one(
+            """
+            SELECT id FROM addresses WHERE user_id = :uid AND is_default = true
+            ORDER BY id DESC LIMIT 1
+            """,
+            {"uid": user_id},
+        )
+        if existing:
+            _exec(
+                """
+                UPDATE addresses
+                SET label = :label, line1 = :l1, line2 = :l2, city = :city, state = :state,
+                    zip_code = :zip, country = :country, address_type = :atype, is_default = true, updated_at = NOW()
+                WHERE id = :id
+                """,
+                {"id": existing["id"], **params},
+            )
+        else:
+            _exec(
+                """
+                INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, true, NOW(), NOW())
+                """,
+                params,
+            )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
+        existing = _one(
+            """
+            SELECT id FROM customer_addresses WHERE user_id = :uid AND is_default = true
+            ORDER BY id DESC LIMIT 1
+            """,
+            {"uid": user_id},
+        )
+        if existing:
+            _exec(
+                """
+                UPDATE customer_addresses
+                SET label = :label, line1 = :l1, line2 = :l2, city = :city, state = :state,
+                    zip_code = :zip, country = :country, is_default = true, updated_at = NOW()
+                WHERE id = :id
+                """,
+                {"id": existing["id"], **params},
+            )
+        else:
+            _exec(
+                """
+                INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, true, NOW(), NOW())
+                """,
+                params,
+            )
+
+
 @mobile_bp.get("/profile")
 @require_mobile_auth
 def get_profile():
@@ -706,13 +860,7 @@ def get_profile():
     )
     if not u:
         return jsonify({"message": "User not found"}), 404
-    addrs = _q(
-        """
-        SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
-        FROM customer_addresses WHERE user_id = :uid ORDER BY is_default DESC, id DESC
-        """,
-        {"uid": g.mobile_user_id},
-    )
+    addrs = _list_user_addresses(g.mobile_user_id)
     default_addr = None
     addr_list = []
     for a in addrs:
@@ -757,6 +905,7 @@ def patch_profile():
         """,
         {"id": g.mobile_user_id, "fn": fn, "ln": ln, "email": email},
     )
+    _upsert_default_address_for_user(g.mobile_user_id, data)
     db.session.commit()
     return get_profile()
 
@@ -764,13 +913,7 @@ def patch_profile():
 @mobile_bp.get("/addresses")
 @require_mobile_auth
 def list_addresses():
-    addrs = _q(
-        """
-        SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
-        FROM customer_addresses WHERE user_id = :uid ORDER BY is_default DESC, id DESC
-        """,
-        {"uid": g.mobile_user_id},
-    )
+    addrs = _list_user_addresses(g.mobile_user_id)
     return jsonify({"data": [_address_row_to_dict(dict(a)) for a in addrs]}), 200
 
 
@@ -782,26 +925,42 @@ def create_address():
     if not line1:
         return jsonify({"message": "line1 is required"}), 400
     is_def = bool(data.get("isDefault"))
-    if is_def:
-        _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
-    row = _one(
-        """
-        INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
-        VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
-        RETURNING id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
-        """,
-        {
-            "uid": g.mobile_user_id,
-            "label": (data.get("label") or "Home").strip() or "Home",
-            "l1": line1,
-            "l2": (data.get("line2") or data.get("addressLine2") or "").strip() or None,
-            "city": (data.get("city") or "").strip() or None,
-            "state": (data.get("state") or "").strip() or None,
-            "zip": (data.get("zipCode") or data.get("zip") or "").strip() or None,
-            "country": (data.get("country") or "India").strip() or "India",
-            "isd": is_def,
-        },
-    )
+    params = {
+        "uid": g.mobile_user_id,
+        "label": (data.get("label") or "Home").strip() or "Home",
+        "l1": line1,
+        "l2": (data.get("line2") or data.get("addressLine2") or "").strip() or None,
+        "city": (data.get("city") or "").strip() or None,
+        "state": (data.get("state") or "").strip() or None,
+        "zip": (data.get("zipCode") or data.get("zip") or "").strip() or None,
+        "country": (data.get("country") or "India").strip() or "India",
+        "atype": (data.get("addressType") or "home").strip() or "home",
+        "isd": is_def,
+    }
+    try:
+        if is_def:
+            _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
+        row = _one(
+            """
+            INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
+            VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd, NOW(), NOW())
+            RETURNING id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            """,
+            params,
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        if is_def:
+            _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
+        row = _one(
+            """
+            INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
+            VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
+            RETURNING id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            """,
+            params,
+        )
     db.session.commit()
     return jsonify(_address_row_to_dict(dict(row))), 201
 
@@ -809,53 +968,75 @@ def create_address():
 @mobile_bp.put("/addresses/<int:address_id>")
 @require_mobile_auth
 def update_address(address_id: int):
-    owner = _one(
-        "SELECT id FROM customer_addresses WHERE id = :id AND user_id = :uid",
-        {"id": address_id, "uid": g.mobile_user_id},
-    )
-    if not owner:
-        return jsonify({"message": "Address not found"}), 404
-
     data = request.get_json(silent=True) or {}
     is_def = data.get("isDefault")
-    if is_def is True:
+    params = {
+        "id": address_id,
+        "uid": g.mobile_user_id,
+        "label": data.get("label"),
+        "l1": data.get("line1") or data.get("addressLine1"),
+        "l2": data.get("line2") or data.get("addressLine2"),
+        "city": data.get("city"),
+        "state": data.get("state"),
+        "zip": data.get("zipCode") or data.get("zip"),
+        "country": data.get("country"),
+        "atype": data.get("addressType"),
+        "isd": is_def if isinstance(is_def, bool) else None,
+    }
+    table = "addresses"
+    try:
+        owner = _one("SELECT id FROM addresses WHERE id = :id AND user_id = :uid", {"id": address_id, "uid": g.mobile_user_id})
+        if not owner:
+            return jsonify({"message": "Address not found"}), 404
+        if is_def is True:
+            _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid AND id != :aid", {"uid": g.mobile_user_id, "aid": address_id})
         _exec(
-            "UPDATE customer_addresses SET is_default = false WHERE user_id = :uid AND id != :aid",
-            {"uid": g.mobile_user_id, "aid": address_id},
+            """
+            UPDATE addresses SET
+                label = COALESCE(:label, label),
+                line1 = COALESCE(:l1, line1),
+                line2 = COALESCE(:l2, line2),
+                city = COALESCE(:city, city),
+                state = COALESCE(:state, state),
+                zip_code = COALESCE(:zip, zip_code),
+                country = COALESCE(:country, country),
+                address_type = COALESCE(:atype, address_type),
+                is_default = COALESCE(:isd, is_default),
+                updated_at = NOW()
+            WHERE id = :id AND user_id = :uid
+            """,
+            params,
         )
-
-    _exec(
-        """
-        UPDATE customer_addresses SET
-            label = COALESCE(:label, label),
-            line1 = COALESCE(:l1, line1),
-            line2 = COALESCE(:l2, line2),
-            city = COALESCE(:city, city),
-            state = COALESCE(:state, state),
-            zip_code = COALESCE(:zip, zip_code),
-            country = COALESCE(:country, country),
-            is_default = COALESCE(:isd, is_default),
-            updated_at = NOW()
-        WHERE id = :id AND user_id = :uid
-        """,
-        {
-            "id": address_id,
-            "uid": g.mobile_user_id,
-            "label": data.get("label"),
-            "l1": data.get("line1") or data.get("addressLine1"),
-            "l2": data.get("line2") or data.get("addressLine2"),
-            "city": data.get("city"),
-            "state": data.get("state"),
-            "zip": data.get("zipCode") or data.get("zip"),
-            "country": data.get("country"),
-            "isd": is_def if isinstance(is_def, bool) else None,
-        },
-    )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        table = "customer_addresses"
+        owner = _one("SELECT id FROM customer_addresses WHERE id = :id AND user_id = :uid", {"id": address_id, "uid": g.mobile_user_id})
+        if not owner:
+            return jsonify({"message": "Address not found"}), 404
+        if is_def is True:
+            _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid AND id != :aid", {"uid": g.mobile_user_id, "aid": address_id})
+        _exec(
+            """
+            UPDATE customer_addresses SET
+                label = COALESCE(:label, label),
+                line1 = COALESCE(:l1, line1),
+                line2 = COALESCE(:l2, line2),
+                city = COALESCE(:city, city),
+                state = COALESCE(:state, state),
+                zip_code = COALESCE(:zip, zip_code),
+                country = COALESCE(:country, country),
+                is_default = COALESCE(:isd, is_default),
+                updated_at = NOW()
+            WHERE id = :id AND user_id = :uid
+            """,
+            params,
+        )
     db.session.commit()
     row = _one(
-        """
+        f"""
         SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
-        FROM customer_addresses WHERE id = :id
+        FROM {table} WHERE id = :id
         """,
         {"id": address_id},
     )
@@ -865,10 +1046,18 @@ def update_address(address_id: int):
 @mobile_bp.delete("/addresses/<int:address_id>")
 @require_mobile_auth
 def delete_address(address_id: int):
-    r = _one(
-        "DELETE FROM customer_addresses WHERE id = :id AND user_id = :uid RETURNING id",
-        {"id": address_id, "uid": g.mobile_user_id},
-    )
+    try:
+        r = _one(
+            "DELETE FROM addresses WHERE id = :id AND user_id = :uid RETURNING id",
+            {"id": address_id, "uid": g.mobile_user_id},
+        )
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+        r = _one(
+            "DELETE FROM customer_addresses WHERE id = :id AND user_id = :uid RETURNING id",
+            {"id": address_id, "uid": g.mobile_user_id},
+        )
     if not r:
         return jsonify({"message": "Address not found"}), 404
     db.session.commit()

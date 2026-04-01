@@ -135,6 +135,7 @@ def register():
                     "email": user.email,
                     "firstName": user.first_name or "",
                     "lastName": user.last_name or "",
+                    "role": user.user_type,
                     "userType": user.user_type,
                 },
             }
@@ -168,6 +169,7 @@ def login():
                 "email": user.email,
                 "firstName": user.first_name or "",
                 "lastName": user.last_name or "",
+                "role": user.user_type,
                 "userType": user.user_type,
             },
         }
@@ -187,6 +189,7 @@ def me():
                 "email": user.email,
                 "firstName": user.first_name or "",
                 "lastName": user.last_name or "",
+                "role": user.user_type,
                 "userType": user.user_type,
             }
         }

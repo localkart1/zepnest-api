@@ -178,6 +178,7 @@
           "Customers"
         ],
         "summary": "List customers (paginated)",
+        "description": "Uses `items` as the primary list key.\nLegacy `data` is not returned on this endpoint anymore.\n",
         "parameters": [
           {
             "$ref": "#/components/parameters/Page"
@@ -208,6 +209,42 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "id",
+                "createdAt",
+                "updatedAt",
+                "firstName",
+                "lastName",
+                "email",
+                "phone"
+              ]
+            }
+          },
+          {
+            "name": "sortField",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "description": "Alias for sortBy"
+            }
+          },
+          {
+            "name": "sortOrder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
             }
           }
         ],
@@ -539,6 +576,22 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "customerId",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "description": "Filter by users.user_id"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "description": "Legacy alias for customerId"
             }
           }
         ],
@@ -1068,6 +1121,43 @@
         }
       }
     },
+    "/api/enumerations/time-slots": {
+      "get": {
+        "tags": [
+          "Enumerations"
+        ],
+        "summary": "Active time slots from time_slot_master",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "example": "1"
+                      },
+                      "timeSlot": {
+                        "type": "string",
+                        "example": "07:30 - 08:00"
+                      },
+                      "active": {
+                        "type": "string",
+                        "example": "Y"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/dashboard/stats": {
       "get": {
         "tags": [
@@ -1497,6 +1587,7 @@
           "Mobile — Profile"
         ],
         "summary": "Update profile fields",
+        "description": "You can pass `address` (or `defaultAddress`) object to upsert the user's default address in the common `addresses` table.",
         "security": [
           {
             "bearerAuth": []
@@ -1516,6 +1607,38 @@
                   },
                   "email": {
                     "type": "string"
+                  },
+                  "address": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "line1": {
+                        "type": "string"
+                      },
+                      "line2": {
+                        "type": "string"
+                      },
+                      "city": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "zipCode": {
+                        "type": "string"
+                      },
+                      "country": {
+                        "type": "string"
+                      },
+                      "addressType": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "defaultAddress": {
+                    "type": "object"
                   }
                 }
               }
@@ -1562,8 +1685,32 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "label": {
+                    "type": "string"
+                  },
                   "line1": {
                     "type": "string"
+                  },
+                  "line2": {
+                    "type": "string"
+                  },
+                  "city": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "zipCode": {
+                    "type": "string"
+                  },
+                  "country": {
+                    "type": "string"
+                  },
+                  "addressType": {
+                    "type": "string"
+                  },
+                  "isDefault": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -1735,6 +1882,10 @@
           "email": { "type": "string" },
           "firstName": { "type": "string" },
           "lastName": { "type": "string" },
+          "role": {
+            "type": "string",
+            "description": "Alias of userType for web frontend compatibility"
+          },
           "userType": { "type": "string" }
         }
       },
@@ -1821,12 +1972,6 @@
       "PaginatedCustomers": {
         "type": "object",
         "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "type": "object"
-            }
-          },
           "items": {
             "type": "array",
             "items": {

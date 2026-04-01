@@ -67,6 +67,35 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "area_id",
         }
     ),
+    "booking_items": frozenset(
+        {
+            "id",
+            "booking_id",
+            "service_id",
+            "quantity",
+            "unit_price",
+            "total_price",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "addresses": frozenset(
+        {
+            "id",
+            "user_id",
+            "label",
+            "line1",
+            "line2",
+            "city",
+            "state",
+            "zip_code",
+            "country",
+            "address_type",
+            "is_default",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "service_areas": frozenset({"area_id", "zipcode", "city"}),
     "categories": frozenset(
         {
@@ -196,6 +225,25 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "audit_logs": frozenset(
+        {
+            "id",
+            "occurred_at",
+            "actor_user_id",
+            "actor_type",
+            "action",
+            "table_name",
+            "http_method",
+            "request_path",
+            "endpoint",
+            "remote_addr",
+            "user_agent",
+            "sql_text",
+            "sql_params",
+            "request_query",
+            "request_body",
+        }
+    ),
 }
 
 # --- Mobile (/mobile) — api/mobile/routes.py ---
@@ -272,6 +320,35 @@ API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "booking_items": frozenset(
+        {
+            "id",
+            "booking_id",
+            "service_id",
+            "quantity",
+            "unit_price",
+            "total_price",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "addresses": frozenset(
+        {
+            "id",
+            "user_id",
+            "label",
+            "line1",
+            "line2",
+            "city",
+            "state",
+            "zip_code",
+            "country",
+            "address_type",
+            "is_default",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "mobile_otp_sessions": frozenset(
         {"id", "phone", "otp_hash", "expires_at", "consumed", "created_at"}
     ),
@@ -289,6 +366,25 @@ API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "is_default",
             "created_at",
             "updated_at",
+        }
+    ),
+    "audit_logs": frozenset(
+        {
+            "id",
+            "occurred_at",
+            "actor_user_id",
+            "actor_type",
+            "action",
+            "table_name",
+            "http_method",
+            "request_path",
+            "endpoint",
+            "remote_addr",
+            "user_agent",
+            "sql_text",
+            "sql_params",
+            "request_query",
+            "request_body",
         }
     ),
 }

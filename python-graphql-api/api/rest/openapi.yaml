@@ -108,6 +108,9 @@ paths:
     get:
       tags: [Customers]
       summary: List customers (paginated)
+      description: |
+        Uses `items` as the primary list key.
+        Legacy `data` is not returned on this endpoint anymore.
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/Limit"
@@ -120,6 +123,15 @@ paths:
         - name: customerUserType
           in: query
           schema: { type: string }
+        - name: sortBy
+          in: query
+          schema: { type: string, enum: [id, createdAt, updatedAt, firstName, lastName, email, phone] }
+        - name: sortField
+          in: query
+          schema: { type: string, description: Alias for sortBy }
+        - name: sortOrder
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
       responses:
         "200":
           description: Paginated list
@@ -277,6 +289,12 @@ paths:
         - name: status
           in: query
           schema: { type: string }
+        - name: customerId
+          in: query
+          schema: { type: integer, description: Filter by users.user_id }
+        - name: customer_id
+          in: query
+          schema: { type: integer, description: Legacy alias for customerId }
       responses:
         "200": { description: Paginated orders }
     post:
@@ -549,6 +567,24 @@ paths:
       responses:
         "200": { description: OK }
 
+  /api/enumerations/time-slots:
+    get:
+      tags: [Enumerations]
+      summary: Active time slots from time_slot_master
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, example: "1" }
+                    timeSlot: { type: string, example: "07:30 - 08:00" }
+                    active: { type: string, example: "Y" }
+
   /api/dashboard/stats:
     get:
       tags: [Dashboard]
@@ -679,6 +715,7 @@ components:
         email: { type: string }
         firstName: { type: string }
         lastName: { type: string }
+        role: { type: string, description: Alias of userType for web frontend compatibility }
         userType: { type: string }
 
     WebAuthSuccess:
@@ -720,7 +757,6 @@ components:
     PaginatedCustomers:
       type: object
       properties:
-        data: { type: array, items: { type: object } }
         items: { type: array, items: { type: object } }
         total: { type: integer }
         page: { type: integer }
