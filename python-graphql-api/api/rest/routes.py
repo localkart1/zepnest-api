@@ -7,6 +7,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.exc import IntegrityError
 
 from api import db
+from api.booking_items_compat import booking_items_pk_column
 from api.booking_status import (
     ASSIGNED_BOOKING_STATUS,
     DEFAULT_BOOKING_STATUS,
@@ -87,11 +88,17 @@ def _addresses_by_user_ids(user_ids: list[int]) -> dict[int, list[dict]]:
 
 
 def _q(sql: str, params=None):
-    return db.session.execute(text(sql), params or {}).mappings().all()
+    result = db.session.execute(text(sql), params or {})
+    if not result.returns_rows:
+        return []
+    return result.mappings().all()
 
 
 def _one(sql: str, params=None):
-    return db.session.execute(text(sql), params or {}).mappings().first()
+    result = db.session.execute(text(sql), params or {})
+    if not result.returns_rows:
+        return None
+    return result.mappings().first()
 
 
 def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict]]:
@@ -100,16 +107,17 @@ def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict
         return {}
     placeholders = ", ".join(f":bid_{i}" for i in range(len(ids)))
     params = {f"bid_{i}": ids[i] for i in range(len(ids))}
+    pk = booking_items_pk_column()
     try:
         rows = _q(
             f"""
-            SELECT bi.id, bi.booking_id, bi.service_id, bi.quantity, bi.unit_price, bi.total_price,
+            SELECT bi.{pk} AS id, bi.booking_id, bi.service_id, bi.quantity, bi.unit_price, bi.total_price,
                    bi.voice_url, bi.video_url, bi.image_url, bi.notes,
                    s.name AS service_name, s.description AS service_description
             FROM booking_items bi
             LEFT JOIN services s ON s.service_id = bi.service_id
             WHERE bi.booking_id IN ({placeholders})
-            ORDER BY bi.id ASC
+            ORDER BY bi.{pk} ASC
             """,
             params,
         )

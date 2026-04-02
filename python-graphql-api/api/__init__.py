@@ -1,5 +1,7 @@
+import logging
 import os
 import json
+import re
 
 from flask import Flask, jsonify, send_file, g, has_request_context, request
 from flask_sqlalchemy import SQLAlchemy
@@ -9,6 +11,7 @@ from sqlalchemy import event
 load_dotenv()
 
 db = SQLAlchemy()
+_logger = logging.getLogger(__name__)
 
 
 def _parse_bool(value: str, default: bool = False) -> bool:
@@ -35,6 +38,27 @@ def _build_engine_options(database_url: str) -> dict:
     return engine_options
 
 
+_AUDIT_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _audit_logs_table_sql() -> str:
+    """
+    Fully-qualified table name for INSERT. Default ``public.audit_logs`` so logging works even when
+    ``DB_SCHEMA`` points at a non-public schema and the audit table was created in ``public``.
+    Override with ``AUDIT_LOG_TABLE=schema.table`` (two SQL identifiers, one dot).
+    """
+    raw = (os.getenv("AUDIT_LOG_TABLE") or "").strip()
+    if raw:
+        if not _AUDIT_TABLE_RE.match(raw):
+            _logger.warning("Invalid AUDIT_LOG_TABLE=%r; using default", raw)
+        else:
+            return raw
+    database_url = os.getenv("DATABASE_URL", "")
+    if database_url.startswith("postgresql"):
+        return "public.audit_logs"
+    return "audit_logs"
+
+
 def _install_audit_logging(app: Flask) -> None:
     """
     Capture INSERT/UPDATE/DELETE SQL executed by this API process and write to ``audit_logs``.
@@ -43,6 +67,9 @@ def _install_audit_logging(app: Flask) -> None:
     enabled = os.getenv("AUDIT_LOG_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
     if not enabled:
         return
+
+    audit_table = _audit_logs_table_sql()
+    audit_debug = _parse_bool(os.getenv("AUDIT_LOG_DEBUG"), default=False)
 
     engine = db.engine
     if getattr(engine, "_audit_installed", False):
@@ -113,8 +140,8 @@ def _install_audit_logging(app: Flask) -> None:
             with conn.engine.begin() as audit_conn:
                 audit_conn.info["_audit_in_progress"] = True
                 audit_conn.exec_driver_sql(
-                    """
-                    INSERT INTO audit_logs
+                    f"""
+                    INSERT INTO {audit_table}
                         (occurred_at, actor_user_id, actor_type, action, table_name, http_method, request_path,
                          endpoint, remote_addr, user_agent, sql_text, sql_params, request_query, request_body)
                     VALUES
@@ -123,9 +150,10 @@ def _install_audit_logging(app: Flask) -> None:
                     """,
                     payload,
                 )
-        except Exception:
+        except Exception as exc:
             # Do not break API flow if audit table/insert fails.
-            pass
+            if audit_debug or app.debug:
+                _logger.warning("audit_logs insert failed: %s", exc, exc_info=True)
 
 def create_app():
     """Create and configure Flask application"""
