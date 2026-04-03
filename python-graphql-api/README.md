@@ -291,6 +291,8 @@ Run as needed on PostgreSQL:
 gunicorn -w 4 -b 0.0.0.0:5002 "api:create_app()"
 ```
 
+**EC2 deploy, systemd, Nginx, verification, and rollback:** see [docs/RELEASE.md](docs/RELEASE.md).
+
 ## License
 
 MIT
