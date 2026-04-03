@@ -41,6 +41,45 @@ def _build_engine_options(database_url: str) -> dict:
 _AUDIT_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _audit_normalize_table_fragment(raw: str) -> str:
+    """Strip quotes and take unqualified name (``public.bookings`` → ``bookings``)."""
+    t = (raw or "").strip()
+    if len(t) >= 2 and t[0] == '"' and t[-1] == '"':
+        t = t[1:-1]
+    if "." in t:
+        t = t.split(".")[-1]
+    if len(t) >= 2 and t[0] == '"' and t[-1] == '"':
+        t = t[1:-1]
+    return t
+
+
+def _audit_table_name_from_sql(statement: str, verb: str) -> str | None:
+    """
+    Best-effort table name for audit ``table_name`` column.
+    Handles extra whitespace, schema-qualified names, and quoted identifiers.
+    """
+    if not statement:
+        return None
+    s = statement.strip()
+    v = verb.upper()
+    if v == "INSERT":
+        m = re.search(r"\binsert\s+into\s+([^\s(]+)", s, re.IGNORECASE | re.DOTALL)
+        if m:
+            return _audit_normalize_table_fragment(m.group(1))
+        return None
+    if v == "UPDATE":
+        m = re.search(r"\bupdate\s+(?:only\s+)?([^\s]+)\s+set\b", s, re.IGNORECASE | re.DOTALL)
+        if m:
+            return _audit_normalize_table_fragment(m.group(1))
+        return None
+    if v == "DELETE":
+        m = re.search(r"\bdelete\s+from\s+(?:only\s+)?([^\s(]+)", s, re.IGNORECASE | re.DOTALL)
+        if m:
+            return _audit_normalize_table_fragment(m.group(1))
+        return None
+    return None
+
+
 def _audit_logs_table_sql() -> str:
     """
     Fully-qualified table name for INSERT. Default ``public.audit_logs`` so logging works even when
@@ -92,23 +131,7 @@ def _install_audit_logging(app: Flask) -> None:
         if "audit_logs" in sql.lower():
             return
 
-        low = sql.lower()
-        table_name = None
-        if first == "INSERT":
-            marker = "insert into "
-            idx = low.find(marker)
-            if idx >= 0:
-                table_name = low[idx + len(marker):].split("(", 1)[0].strip().split(".", 1)[-1]
-        elif first == "UPDATE":
-            marker = "update "
-            idx = low.find(marker)
-            if idx >= 0:
-                table_name = low[idx + len(marker):].split(None, 1)[0].strip().split(".", 1)[-1]
-        elif first == "DELETE":
-            marker = "delete from "
-            idx = low.find(marker)
-            if idx >= 0:
-                table_name = low[idx + len(marker):].split(None, 1)[0].strip().split(".", 1)[-1]
+        table_name = _audit_table_name_from_sql(sql, first)
 
         actor_user_id = getattr(g, "web_user_id", None) or getattr(g, "mobile_user_id", None)
         actor_type = "web_user" if getattr(g, "web_user_id", None) else ("mobile_customer" if getattr(g, "mobile_user_id", None) else None)
