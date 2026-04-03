@@ -4,6 +4,7 @@ import json
 import re
 
 from flask import Flask, jsonify, send_file, g, has_request_context, request
+from werkzeug.exceptions import HTTPException
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from sqlalchemy import event
@@ -178,6 +179,27 @@ def _install_audit_logging(app: Flask) -> None:
             if audit_debug or app.debug:
                 _logger.warning("audit_logs insert failed: %s", exc, exc_info=True)
 
+
+def _register_json_error_handlers(app: Flask) -> None:
+    """
+    Return JSON for HTTP errors (404, 405, etc.) and unhandled exceptions instead of HTML pages.
+    Shape: {"message": "<string>"}.
+    """
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(exc: HTTPException):
+        msg = (exc.description or "").strip() or (exc.name or "HTTP error")
+        return jsonify({"message": msg}), exc.code
+
+    @app.errorhandler(Exception)
+    def handle_unhandled_exception(exc: Exception):
+        if isinstance(exc, HTTPException):
+            msg = (exc.description or "").strip() or (exc.name or "HTTP error")
+            return jsonify({"message": msg}), exc.code
+        _logger.exception("Unhandled exception")
+        return jsonify({"message": "Internal server error"}), 500
+
+
 def create_app():
     """Create and configure Flask application"""
     app = Flask(__name__)
@@ -250,5 +272,7 @@ def create_app():
                     404,
                 )
             return send_file(_openapi_json, mimetype="application/json", max_age=300)
+
+        _register_json_error_handlers(app)
 
     return app
