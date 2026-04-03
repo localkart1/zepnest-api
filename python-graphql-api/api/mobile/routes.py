@@ -455,22 +455,39 @@ def verify_otp():
     ), 200
 
 
+def _mobile_home_empty_response(norm: str | None):
+    body: dict = {"categories": []}
+    if norm:
+        body["message"] = "No services available for this location"
+        body["zipCode"] = norm
+    return jsonify(body), 200
+
+
 def _mobile_home_legacy_no_catalog_tables():
+    norm = _resolve_zip_for_home()
+    scope = _geo_service_scope(norm)
+    if scope[0] == "empty":
+        return _mobile_home_empty_response(norm)
+    frag, frag_params = _sql_service_in_scope_fragment("services", scope)
     cat_rows = _q(
-        """
+        f"""
         SELECT DISTINCT category AS name
         FROM services
         WHERE is_active = true AND category IS NOT NULL AND TRIM(category) <> ''
+        {frag}
         ORDER BY category
-        """
+        """,
+        frag_params,
     )
     svc_rows = _q(
-        """
+        f"""
         SELECT service_id, name, description, base_price, estimated_duration_mins, category, image_url, is_active
         FROM services
         WHERE is_active = true
+        {frag}
         ORDER BY category NULLS LAST, service_id DESC
-        """
+        """,
+        frag_params,
     )
     by_cat: dict[str, list] = {}
     for r in svc_rows:
@@ -490,26 +507,45 @@ def _mobile_home_legacy_no_catalog_tables():
     for r in cat_rows:
         name = r["name"]
         categories.append({"id": name, "name": name, "services": by_cat.get(name, [])[:12]})
-    return jsonify({"categories": categories}), 200
+    body: dict = {"categories": categories}
+    if norm:
+        body["zipCode"] = norm
+    return jsonify(body), 200
 
 
 @mobile_bp.get("/home")
 def mobile_home():
     """
-    Home categories: uses ``categories`` + ``services.category_id`` when the schema is migrated;
-    otherwise falls back to distinct ``services.category`` strings.
+    Home categories for the mobile app.
+
+    **ZIP / PIN filtering**
+    - Query: ``zipCode``, ``zip``, ``pincode``, or ``pin`` (optional).
+    - Or send ``Authorization: Bearer`` for a logged-in customer; the default saved address PIN is used.
+    - Resolves ``service_areas`` by PIN, then filters services via ``service_area_services`` when that
+      table exists (see ``scripts/create_service_area_services.sql``). If the junction table is missing
+      but the PIN matches a ``service_areas`` row, all active services are returned (backward compatible).
+
+    Uses ``categories`` + ``services.category_id`` when the schema is migrated; otherwise falls back to
+    distinct ``services.category`` strings.
     """
+    norm = _resolve_zip_for_home()
+    scope = _geo_service_scope(norm)
+    if scope[0] == "empty":
+        return _mobile_home_empty_response(norm)
+    frag, frag_params = _sql_service_in_scope_fragment("s", scope)
     try:
         svc_rows = _q(
-            """
+            f"""
             SELECT s.service_id, s.name, s.description, s.base_price, s.estimated_duration_mins,
                    COALESCE(cat.name, NULLIF(TRIM(s.category), ''), 'General') AS cat_key,
                    s.image_url
             FROM services s
             LEFT JOIN categories cat ON cat.id = s.category_id
             WHERE s.is_active = true
+            {frag}
             ORDER BY cat_key NULLS LAST, s.service_id DESC
-            """
+            """,
+            frag_params,
         )
         services_by_name: dict[str, list] = {}
         for r in svc_rows:
@@ -581,7 +617,10 @@ def mobile_home():
                         "subCategories": [],
                     }
                 )
-        return jsonify({"categories": categories}), 200
+        body: dict = {"categories": categories}
+        if norm:
+            body["zipCode"] = norm
+        return jsonify(body), 200
     except ProgrammingError as e:
         if is_missing_relation_error(e):
             return _mobile_home_legacy_no_catalog_tables()
@@ -792,6 +831,140 @@ def _list_user_addresses(user_id: int):
             """,
             {"uid": user_id},
         )
+
+
+def _normalize_pin_zip(raw: str | None) -> str | None:
+    """Normalize PIN / zip to digits for matching ``service_areas.zipcode``."""
+    if not raw:
+        return None
+    digits = re.sub(r"\D", "", str(raw).strip())
+    if not digits:
+        return None
+    if len(digits) >= 6:
+        return digits[-6:]
+    return digits
+
+
+def _optional_mobile_user_id() -> int | None:
+    auth = request.headers.get("Authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    payload = _decode_token(token)
+    if not payload or payload.get("typ") != "mobile_customer":
+        return None
+    try:
+        return int(payload["sub"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _default_address_zip_for_user(user_id: int) -> str | None:
+    rows = _list_user_addresses(user_id)
+    for r in rows:
+        if r.get("is_default") and r.get("zip_code"):
+            return _normalize_pin_zip(str(r["zip_code"]))
+    for r in rows:
+        if r.get("zip_code"):
+            return _normalize_pin_zip(str(r["zip_code"]))
+    return None
+
+
+def _resolve_zip_for_home() -> str | None:
+    """PIN from ``zipCode`` / ``zip`` / ``pincode``, else optional Bearer + default address."""
+    q = (
+        request.args.get("zipCode")
+        or request.args.get("zip")
+        or request.args.get("pincode")
+        or request.args.get("pin")
+    )
+    if q is not None and str(q).strip() != "":
+        return _normalize_pin_zip(str(q).strip())
+    uid = _optional_mobile_user_id()
+    if uid is not None:
+        return _default_address_zip_for_user(uid)
+    return None
+
+
+def _area_ids_for_normalized_zip(norm: str) -> list[int] | None:
+    """Return area IDs for PIN; ``None`` if ``service_areas`` is missing (skip geo filter)."""
+    if not norm:
+        return []
+    try:
+        rows = _q(
+            """
+            SELECT area_id
+            FROM service_areas
+            WHERE regexp_replace(TRIM(COALESCE(zipcode::text, '')), '[^0-9]', '', 'g') = :norm
+            """,
+            {"norm": norm},
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return None
+        raise
+    return [int(r["area_id"]) for r in rows if r.get("area_id") is not None]
+
+
+def _service_ids_for_service_areas(area_ids: list[int]) -> set[int] | None:
+    """
+    ``None`` = ``service_area_services`` missing (show all services for a served PIN).
+    ``set()`` = table exists but no rows for these areas.
+    ``{...}`` = filter to these service IDs.
+    """
+    if not area_ids:
+        return set()
+    placeholders = ", ".join(f":aid_{i}" for i in range(len(area_ids)))
+    params = {f"aid_{i}": area_ids[i] for i in range(len(area_ids))}
+    try:
+        rows = _q(
+            f"""
+            SELECT DISTINCT service_id
+            FROM service_area_services
+            WHERE area_id IN ({placeholders})
+            """,
+            params,
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return None
+        raise
+    return {int(r["service_id"]) for r in rows if r.get("service_id") is not None}
+
+
+def _geo_service_scope(norm_zip: str | None) -> tuple[str, set[int] | None]:
+    """
+    Returns ("skip", None) | ("empty", None) | ("all", None) | ("filter", set[int]).
+    """
+    if not norm_zip:
+        return ("skip", None)
+    area_ids = _area_ids_for_normalized_zip(norm_zip)
+    if area_ids is None:
+        return ("skip", None)
+    if not area_ids:
+        return ("empty", None)
+    ids = _service_ids_for_service_areas(area_ids)
+    if ids is None:
+        return ("all", None)
+    if not ids:
+        return ("empty", None)
+    return ("filter", ids)
+
+
+def _sql_service_in_scope_fragment(table_alias: str, scope: tuple[str, set[int] | None]) -> tuple[str, dict]:
+    kind, ids = scope
+    if kind in ("skip", "all"):
+        return "", {}
+    if kind == "empty":
+        return f" AND 1=0 ", {}
+    if kind == "filter" and ids:
+        id_list = sorted(ids)
+        ph = ",".join(f":mh_{i}" for i in range(len(id_list)))
+        params = {f"mh_{i}": id_list[i] for i in range(len(id_list))}
+        return f" AND {table_alias}.service_id IN ({ph}) ", params
+    return " AND 1=0 ", {}
 
 
 def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
