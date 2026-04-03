@@ -61,7 +61,6 @@ Paginated responses typically use this shape:
 
 ```json
 {
-  "items": [],
   "data": [],
   "total": 0,
   "page": 1,
@@ -71,8 +70,7 @@ Paginated responses typically use this shape:
 ```
 
 Notes:
-- Most legacy list endpoints include both `items` and `data` (same list) for compatibility.
-- `GET /api/customers` returns `items` (primary) and does **not** include legacy `data`.
+- List endpoints return `data` as the result array.
 
 ---
 

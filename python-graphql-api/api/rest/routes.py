@@ -28,16 +28,13 @@ def _int_param(name: str, default: int) -> int:
         return default
 
 
-def _paginate(rows, page: int, limit: int, *, include_legacy_data: bool = True):
+def _paginate(rows, page: int, limit: int):
     total = len(rows)
     start = (page - 1) * limit
     end = start + limit
     total_pages = (total + limit - 1) // limit if limit > 0 else 0
-    items = rows[start:end]
-    body = {"items": items, "total": total, "page": page, "limit": limit, "totalPages": total_pages}
-    if include_legacy_data:
-        body["data"] = items
-    return body
+    data = rows[start:end]
+    return {"data": data, "total": total, "page": page, "limit": limit, "totalPages": total_pages}
 
 
 def _addresses_by_user_ids(user_ids: list[int]) -> dict[int, list[dict]]:
@@ -276,7 +273,7 @@ def list_customers():
         }
         for r in rows
     ]
-    return jsonify(_paginate(mapped, page, limit, include_legacy_data=False))
+    return jsonify(_paginate(mapped, page, limit))
 
 
 @rest_bp.get("/customers/<int:customer_id>")
@@ -583,7 +580,7 @@ def list_orders():
             return jsonify({"message": "customerId must be an integer"}), 400
     rows = _q(
         """
-        SELECT b.booking_id, b.booking_number, b.status, b.total_amount, b.created_at, b.updated_at, b.technician_id,
+        SELECT b.booking_id, b.booking_number, b.customer_id, b.status, b.total_amount, b.created_at, b.updated_at, b.technician_id,
                u.first_name, u.last_name, u.phone
         FROM bookings b
         LEFT JOIN users u ON u.user_id = b.customer_id
