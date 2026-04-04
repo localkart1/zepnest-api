@@ -82,7 +82,7 @@
       "post": {
         "tags": ["Auth"],
         "summary": "Register with email and password (web)",
-        "description": "Stores a Werkzeug hash in `users.password_hash`. New accounts are `user_type=customer`. Email is normalized to lowercase.",
+        "description": "Stores a Werkzeug hash in `users.password_hash`. Set `role` (or `userType`) to `customer`, `technician`, or `admin` — stored as `users.user_type` (default `customer`). Technicians also get a `technician_profiles` row. Email is normalized to lowercase. Allowed roles can be restricted with env `WEB_REGISTER_ALLOWED_ROLES` (comma-separated).",
         "requestBody": {
           "required": true,
           "content": {
@@ -98,7 +98,38 @@
                     "description": "Plain text; stored hashed"
                   },
                   "firstName": { "type": "string" },
-                  "lastName": { "type": "string" }
+                  "lastName": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "role": {
+                    "type": "string",
+                    "enum": ["customer", "technician", "admin"],
+                    "default": "customer",
+                    "description": "Alias: `userType` or `user_type`"
+                  },
+                  "userType": {
+                    "type": "string",
+                    "enum": ["customer", "technician", "admin"]
+                  },
+                  "specialization": {
+                    "oneOf": [
+                      { "type": "string" },
+                      { "type": "array", "items": { "type": "string" } }
+                    ],
+                    "description": "When role is technician"
+                  },
+                  "experience": { "type": "integer", "description": "Alias: experienceYears" },
+                  "experienceYears": { "type": "integer" },
+                  "bio": { "type": "string" },
+                  "hourlyRate": { "type": "number" },
+                  "certification": { "type": "string" },
+                  "certifications": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Technician profile status (e.g. available)"
+                  }
                 }
               }
             }
@@ -114,6 +145,7 @@
             }
           },
           "400": { "description": "Validation error" },
+          "403": { "description": "Role not allowed (WEB_REGISTER_ALLOWED_ROLES)" },
           "409": { "description": "Email already registered" }
         }
       }

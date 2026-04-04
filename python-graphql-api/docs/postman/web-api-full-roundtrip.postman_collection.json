@@ -42,7 +42,7 @@
         "header": [{ "key": "Content-Type", "value": "application/json" }],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"email\": \"{{registerEmail}}\",\n  \"password\": \"{{registerPassword}}\",\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Web\"\n}"
+          "raw": "{\n  \"email\": \"{{registerEmail}}\",\n  \"password\": \"{{registerPassword}}\",\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Web\",\n  \"role\": \"customer\"\n}"
         },
         "url": "{{baseUrl}}/api/auth/register",
         "description": "POST /api/auth/register — creates `users` row with password hash; may return token on 201."

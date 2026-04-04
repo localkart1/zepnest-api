@@ -637,6 +637,13 @@ def update_customer(customer_id: int):
         set_parts.append("internal_notes = :inotes")
         v = data.get("internalNotes", data.get("internal_notes"))
         params["inotes"] = "" if v is None else (v if isinstance(v, str) else str(v))
+    if "loyaltyPoints" in data or "loyalty_points" in data:
+        lp = data.get("loyaltyPoints", data.get("loyalty_points"))
+        try:
+            params["lp"] = int(lp)
+        except (TypeError, ValueError):
+            return jsonify({"message": "loyaltyPoints must be an integer"}), 400
+        set_parts.append("loyalty_points = :lp")
 
     try:
         if set_parts:
@@ -760,6 +767,8 @@ def create_technician():
 @rest_bp.put("/technicians/<int:technician_id>")
 def update_technician(technician_id: int):
     d = request.get_json(silent=True) or {}
+    if not _one("SELECT 1 AS ok FROM technician_profiles WHERE technician_id = :id", {"id": technician_id}):
+        return jsonify({"message": "Technician not found"}), 404
     _q(
         """
         UPDATE users u
@@ -767,27 +776,79 @@ def update_technician(technician_id: int):
             last_name = COALESCE(:last_name, u.last_name),
             email = COALESCE(:email, u.email),
             phone = COALESCE(:phone, u.phone),
+            loyalty_points = COALESCE(:loyalty_points, u.loyalty_points),
             updated_at = NOW()
         FROM technician_profiles tp
         WHERE tp.technician_id = :id AND u.user_id = tp.user_id
         """,
-        {"id": technician_id, "first_name": d.get("firstName"), "last_name": d.get("lastName"), "email": d.get("email"), "phone": d.get("phone")},
+        {
+            "id": technician_id,
+            "first_name": d.get("firstName"),
+            "last_name": d.get("lastName"),
+            "email": d.get("email"),
+            "phone": d.get("phone"),
+            "loyalty_points": d.get("loyaltyPoints") if "loyaltyPoints" in d else (d.get("loyalty_points") if "loyalty_points" in d else None),
+        },
     )
+    if "internalNotes" in d or "internal_notes" in d:
+        v = d.get("internalNotes", d.get("internal_notes"))
+        inotes = "" if v is None else (v if isinstance(v, str) else str(v))
+        _exec(
+            """
+            UPDATE users u SET internal_notes = :inotes, updated_at = NOW()
+            FROM technician_profiles tp
+            WHERE tp.technician_id = :id AND u.user_id = tp.user_id
+            """,
+            {"id": technician_id, "inotes": inotes},
+        )
+    spec = d.get("specialization")
+    if isinstance(spec, list):
+        spec = ", ".join(str(x) for x in spec if x is not None and str(x).strip()) or None
+    cert = d.get("certifications", d.get("certification"))
+    if isinstance(cert, list):
+        cert = ", ".join(str(x) for x in cert if x is not None and str(x).strip()) or None
+    hr = None
+    if "hourlyRate" in d or "hourly_rate" in d:
+        hv = d.get("hourlyRate", d.get("hourly_rate"))
+        try:
+            hr = float(hv) if hv is not None and str(hv).strip() != "" else None
+        except (TypeError, ValueError):
+            return jsonify({"message": "hourlyRate must be a number"}), 400
+    trt = None
+    if "rating" in d:
+        try:
+            trt = float(d["rating"])
+        except (TypeError, ValueError):
+            return jsonify({"message": "rating must be a number"}), 400
+    trev = None
+    if "totalReviews" in d or "total_reviews" in d:
+        try:
+            trev = int(d.get("totalReviews", d.get("total_reviews")))
+        except (TypeError, ValueError):
+            return jsonify({"message": "totalReviews must be an integer"}), 400
     _q(
         """
         UPDATE technician_profiles
         SET specialization = COALESCE(:specialization, specialization),
             experience_years = COALESCE(:experience, experience_years),
             status = COALESCE(:status, status),
-            certification = COALESCE(:certification, certification)
+            certification = COALESCE(:certification, certification),
+            bio = COALESCE(:bio, bio),
+            hourly_rate = COALESCE(:hourly_rate, hourly_rate),
+            rating = COALESCE(:rating, rating),
+            total_reviews = COALESCE(:total_reviews, total_reviews)
         WHERE technician_id=:id
         """,
         {
             "id": technician_id,
-            "specialization": ", ".join(d.get("specialization", [])) if isinstance(d.get("specialization"), list) else d.get("specialization"),
-            "experience": d.get("experience"),
-            "status": d.get("status"),
-            "certification": ", ".join(d.get("certifications", [])) if isinstance(d.get("certifications"), list) else d.get("certifications"),
+            "specialization": spec if "specialization" in d else None,
+            "experience": d.get("experience") if "experience" in d else (d.get("experienceYears") if "experienceYears" in d else None),
+            "status": d.get("status") if "status" in d else None,
+            "certification": cert if ("certifications" in d or "certification" in d) else None,
+            "bio": d.get("bio") if "bio" in d else None,
+            "hourly_rate": hr if ("hourlyRate" in d or "hourly_rate" in d) else None,
+            "rating": trt if "rating" in d else None,
+            "total_reviews": trev if ("totalReviews" in d or "total_reviews" in d) else None,
         },
     )
     db.session.commit()
@@ -1069,7 +1130,112 @@ def create_order():
 @rest_bp.put("/orders/<int:order_id>")
 def update_order(order_id: int):
     d = request.get_json(silent=True) or {}
-    _q("UPDATE bookings SET status=COALESCE(:s,status), technician_id=COALESCE(:t,technician_id), customer_notes=COALESCE(:n,customer_notes), updated_at=NOW() WHERE booking_id=:id", {"id": order_id, "s": d.get("status"), "t": d.get("technicianId"), "n": d.get("customerNotes")})
+    if not _one("SELECT 1 AS ok FROM bookings WHERE booking_id = :id", {"id": order_id}):
+        return jsonify({"message": "Order not found"}), 404
+
+    sets: list[str] = []
+    params: dict = {"id": order_id}
+
+    def _fk_user(uid: int) -> bool:
+        return bool(_one("SELECT 1 AS ok FROM users WHERE user_id = :id", {"id": uid}))
+
+    def _fk_tech(tid: int) -> bool:
+        return bool(_one("SELECT 1 AS ok FROM technician_profiles WHERE technician_id = :id", {"id": tid}))
+
+    if "orderNo" in d or "booking_number" in d:
+        v = d.get("orderNo", d.get("booking_number"))
+        sets.append("booking_number = :booking_number")
+        params["booking_number"] = str(v) if v is not None else ""
+    if "customerId" in d or "customer_id" in d:
+        raw = d.get("customerId", d.get("customer_id"))
+        if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+            sets.append("customer_id = NULL")
+        else:
+            try:
+                cid = int(str(raw).strip())
+            except (TypeError, ValueError):
+                return jsonify({"message": "customerId must be an integer"}), 400
+            if not _fk_user(cid):
+                return jsonify({"message": "customerId does not match an existing user"}), 404
+            sets.append("customer_id = :customer_id")
+            params["customer_id"] = cid
+    if "technicianId" in d or "technician_id" in d:
+        raw = d.get("technicianId", d.get("technician_id"))
+        if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+            sets.append("technician_id = NULL")
+        else:
+            try:
+                tid = int(str(raw).strip())
+            except (TypeError, ValueError):
+                return jsonify({"message": "technicianId must be an integer"}), 400
+            if not _fk_tech(tid):
+                return jsonify({"message": "technicianId does not match an existing technician"}), 404
+            sets.append("technician_id = :technician_id")
+            params["technician_id"] = tid
+    if "status" in d:
+        sets.append("status = :bstatus")
+        params["bstatus"] = d.get("status")
+    if "address" in d or "serviceAddress" in d or "service_address" in d:
+        sets.append("service_address = :svc_addr")
+        params["svc_addr"] = d.get("address", d.get("serviceAddress", d.get("service_address")))
+    if "subtotal" in d:
+        try:
+            params["subtotal"] = float(d["subtotal"])
+        except (TypeError, ValueError):
+            return jsonify({"message": "subtotal must be a number"}), 400
+        sets.append("subtotal = :subtotal")
+    if "discountAmount" in d or "discount_amount" in d:
+        try:
+            params["discount_amount"] = float(d.get("discountAmount", d.get("discount_amount")))
+        except (TypeError, ValueError):
+            return jsonify({"message": "discountAmount must be a number"}), 400
+        sets.append("discount_amount = :discount_amount")
+    if "loyaltyPointsUsed" in d or "loyalty_points_used" in d:
+        try:
+            params["loyalty_points_used"] = int(d.get("loyaltyPointsUsed", d.get("loyalty_points_used")))
+        except (TypeError, ValueError):
+            return jsonify({"message": "loyaltyPointsUsed must be an integer"}), 400
+        sets.append("loyalty_points_used = :loyalty_points_used")
+    if "loyaltyDiscount" in d or "loyalty_discount" in d:
+        try:
+            params["loyalty_discount"] = float(d.get("loyaltyDiscount", d.get("loyalty_discount")))
+        except (TypeError, ValueError):
+            return jsonify({"message": "loyaltyDiscount must be a number"}), 400
+        sets.append("loyalty_discount = :loyalty_discount")
+    if "totalAmount" in d or "total_amount" in d:
+        try:
+            params["total_amount"] = float(d.get("totalAmount", d.get("total_amount")))
+        except (TypeError, ValueError):
+            return jsonify({"message": "totalAmount must be a number"}), 400
+        sets.append("total_amount = :total_amount")
+    if "loyaltyPointsEarned" in d or "loyalty_points_earned" in d:
+        try:
+            params["loyalty_points_earned"] = int(d.get("loyaltyPointsEarned", d.get("loyalty_points_earned")))
+        except (TypeError, ValueError):
+            return jsonify({"message": "loyaltyPointsEarned must be an integer"}), 400
+        sets.append("loyalty_points_earned = :loyalty_points_earned")
+    if "isSubscriptionBooking" in d or "is_subscription_booking" in d:
+        v = d.get("isSubscriptionBooking", d.get("is_subscription_booking"))
+        params["is_sub_book"] = bool(v)
+        sets.append("is_subscription_booking = :is_sub_book")
+    if "customerNotes" in d or "customer_notes" in d:
+        sets.append("customer_notes = :cust_notes")
+        params["cust_notes"] = d.get("customerNotes", d.get("customer_notes"))
+    if "areaId" in d or "area_id" in d:
+        raw = d.get("areaId", d.get("area_id"))
+        if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+            sets.append("area_id = NULL")
+        else:
+            try:
+                aid = int(str(raw).strip())
+            except (TypeError, ValueError):
+                return jsonify({"message": "areaId must be an integer"}), 400
+            sets.append("area_id = :area_id")
+            params["area_id"] = aid
+
+    if sets:
+        sets.append("updated_at = NOW()")
+        _exec(f"UPDATE bookings SET {', '.join(sets)} WHERE booking_id = :id", params)
     db.session.commit()
     return get_order(order_id)
 
@@ -1263,13 +1429,28 @@ def create_service():
 @rest_bp.put("/services/<int:service_id>")
 def update_service(service_id: int):
     d = request.get_json(silent=True) or {}
+    if not _one("SELECT 1 AS ok FROM services WHERE service_id = :id", {"id": service_id}):
+        return jsonify({"message": "Service not found"}), 404
+
+    d_body = dict(d)
+    if "categoryId" in d_body or "category_id" in d_body:
+        rv = d_body["categoryId"] if "categoryId" in d_body else d_body.get("category_id")
+        if rv is None or (isinstance(rv, str) and not str(rv).strip()):
+            try:
+                _exec("UPDATE services SET category_id = NULL, updated_at = NOW() WHERE service_id = :id", {"id": service_id})
+            except ProgrammingError as e:
+                if not is_missing_relation_error(e):
+                    raise
+            d_body.pop("categoryId", None)
+            d_body.pop("category_id", None)
+
     cid, cname = None, None
-    if any(k in d for k in ("category", "categoryId", "category_id")):
+    if any(k in d_body for k in ("category", "categoryId", "category_id")):
         try:
-            cid, cname = _resolve_category_for_service_write(d)
+            cid, cname = _resolve_category_for_service_write(d_body)
         except ProgrammingError as e:
             if is_missing_relation_error(e):
-                cid, cname = None, d.get("category") or d.get("categoryId")
+                cid, cname = None, d_body.get("category") or d_body.get("categoryId")
             else:
                 raise
     bind = {
@@ -1440,6 +1621,156 @@ def catalog_subcategories():
             for r in rows
         ]
     )
+
+
+@rest_bp.put("/addresses/<int:address_id>")
+def update_address_row(address_id: int):
+    """Update a single row in ``addresses`` or ``customer_addresses`` (all writable columns)."""
+    d = request.get_json(silent=True) or {}
+    tbl: str | None = None
+    row = None
+    try:
+        row = _one("SELECT id, user_id FROM addresses WHERE id = :id", {"id": address_id})
+    except ProgrammingError as e:
+        if not is_missing_relation_error(e):
+            raise
+    if row:
+        tbl = "addresses"
+    else:
+        try:
+            row = _one("SELECT id, user_id FROM customer_addresses WHERE id = :id", {"id": address_id})
+        except ProgrammingError as e:
+            if not is_missing_relation_error(e):
+                raise
+            return jsonify({"message": "Address storage table not available"}), 501
+        if row:
+            tbl = "customer_addresses"
+    if not tbl or not row:
+        return jsonify({"message": "Address not found"}), 404
+
+    uid = int(row["user_id"])
+    sets: list[str] = []
+    params: dict = {"id": address_id}
+
+    if "label" in d or "nickName" in d:
+        sets.append("label = :alabel")
+        params["alabel"] = (d.get("label") or d.get("nickName") or "").strip() or "Home"
+    if "line1" in d or "addressLine1" in d or "street" in d:
+        v = d.get("line1") or d.get("addressLine1") or d.get("street")
+        sets.append("line1 = :al1")
+        params["al1"] = (v or "").strip() or ""
+    if "line2" in d or "addressLine2" in d:
+        sets.append("line2 = :al2")
+        v = d.get("line2", d.get("addressLine2"))
+        params["al2"] = (v or "").strip() or None
+    if "city" in d:
+        sets.append("city = :acity")
+        params["acity"] = (d.get("city") or "").strip() or None
+    if "state" in d:
+        sets.append("state = :astate")
+        params["astate"] = (d.get("state") or "").strip() or None
+    if "zipCode" in d or "zip" in d:
+        sets.append("zip_code = :azip")
+        v = d.get("zipCode", d.get("zip"))
+        params["azip"] = (str(v).strip() if v is not None else "") or None
+    if "country" in d:
+        sets.append("country = :actry")
+        params["actry"] = (d.get("country") or "India").strip() or "India"
+    if tbl == "addresses" and ("addressType" in d or "address_type" in d):
+        sets.append("address_type = :aatype")
+        params["aatype"] = ((d.get("addressType") or d.get("address_type") or "home") or "").strip() or "home"
+    if "isDefault" in d or "isPrimary" in d or "is_default" in d:
+        isd = bool(d.get("isDefault", d.get("isPrimary", d.get("is_default", False))))
+        if isd:
+            _exec(f"UPDATE {tbl} SET is_default = false WHERE user_id = :uid", {"uid": uid})
+        sets.append("is_default = :aisd")
+        params["aisd"] = isd
+
+    if not sets:
+        return jsonify({"message": "No updatable fields in body"}), 400
+    if "al1" in params and (params["al1"] is None or str(params["al1"]).strip() == ""):
+        return jsonify({"message": "line1 cannot be empty"}), 400
+
+    sets.append("updated_at = NOW()")
+    try:
+        _exec(f"UPDATE {tbl} SET {', '.join(sets)} WHERE id = :id", params)
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify({"message": "Address storage table not available"}), 501
+        raise
+    db.session.commit()
+    return jsonify({"id": str(address_id), "message": "Address updated"})
+
+
+@rest_bp.put("/catalog/categories/<int:category_id>")
+def update_category(category_id: int):
+    d = request.get_json(silent=True) or {}
+    if not _one("SELECT 1 AS ok FROM categories WHERE id = :id", {"id": category_id}):
+        return jsonify({"message": "Category not found"}), 404
+    sets: list[str] = []
+    params: dict = {"id": category_id}
+    if "name" in d:
+        sets.append("name = :cname")
+        params["cname"] = d.get("name")
+    if "description" in d:
+        sets.append("description = :cdesc")
+        params["cdesc"] = d.get("description")
+    if "icon" in d:
+        sets.append("icon = :cicon")
+        params["cicon"] = d.get("icon")
+    if "isActive" in d or "is_active" in d:
+        sets.append("is_active = :cactive")
+        params["cactive"] = bool(d.get("isActive", d.get("is_active")))
+    if not sets:
+        return jsonify({"message": "No updatable fields in body"}), 400
+    sets.append("updated_at = NOW()")
+    try:
+        _exec(f"UPDATE categories SET {', '.join(sets)} WHERE id = :id", params)
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify({"message": "categories table not available"}), 501
+        raise
+    db.session.commit()
+    return jsonify({"id": str(category_id), "message": "Category updated"})
+
+
+@rest_bp.put("/catalog/subcategories/<int:sub_category_id>")
+def update_sub_category(sub_category_id: int):
+    d = request.get_json(silent=True) or {}
+    if not _one("SELECT 1 AS ok FROM sub_categories WHERE id = :id", {"id": sub_category_id}):
+        return jsonify({"message": "Subcategory not found"}), 404
+    sets: list[str] = []
+    params: dict = {"id": sub_category_id}
+    if "categoryId" in d or "category_id" in d:
+        raw = d.get("categoryId", d.get("category_id"))
+        try:
+            cid = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return jsonify({"message": "categoryId must be an integer"}), 400
+        if not _one("SELECT 1 AS ok FROM categories WHERE id = :id", {"id": cid}):
+            return jsonify({"message": "categoryId does not match an existing category"}), 404
+        sets.append("category_id = :scat")
+        params["scat"] = cid
+    if "name" in d:
+        sets.append("name = :sname")
+        params["sname"] = d.get("name")
+    if "description" in d:
+        sets.append("description = :sdesc")
+        params["sdesc"] = d.get("description")
+    if "isActive" in d or "is_active" in d:
+        sets.append("is_active = :sactive")
+        params["sactive"] = bool(d.get("isActive", d.get("is_active")))
+    if not sets:
+        return jsonify({"message": "No updatable fields in body"}), 400
+    sets.append("updated_at = NOW()")
+    try:
+        _exec(f"UPDATE sub_categories SET {', '.join(sets)} WHERE id = :id", params)
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify({"message": "sub_categories table not available"}), 501
+        raise
+    db.session.commit()
+    return jsonify({"id": str(sub_category_id), "message": "Subcategory updated"})
 
 
 @rest_bp.get("/services/addons")
@@ -1918,68 +2249,73 @@ def create_review():
 @rest_bp.put("/reviews/<int:review_id>")
 def update_review(review_id: int):
     d = request.get_json(silent=True) or {}
-    rating = d.get("rating")
-    if rating is not None:
+    if not _one("SELECT 1 AS ok FROM reviews WHERE review_id = :id", {"id": review_id}):
+        return jsonify({"message": "Review not found"}), 404
+
+    sets: list[str] = []
+    params: dict = {"id": review_id}
+
+    if "bookingId" in d or "booking_id" in d:
+        raw = d.get("bookingId", d.get("booking_id"))
+        if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+            sets.append("booking_id = NULL")
+        else:
+            try:
+                bid = int(str(raw).strip())
+            except (TypeError, ValueError):
+                return jsonify({"message": "bookingId must be an integer"}), 400
+            if not _one("SELECT 1 AS ok FROM bookings WHERE booking_id = :id", {"id": bid}):
+                return jsonify({"message": "bookingId does not match an existing booking"}), 404
+            sets.append("booking_id = :rv_bid")
+            params["rv_bid"] = bid
+    if "customerId" in d or "customer_id" in d:
+        raw = d.get("customerId", d.get("customer_id"))
+        if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+            sets.append("customer_id = NULL")
+        else:
+            try:
+                cid = int(str(raw).strip())
+            except (TypeError, ValueError):
+                return jsonify({"message": "customerId must be an integer"}), 400
+            if not _one("SELECT 1 AS ok FROM users WHERE user_id = :id", {"id": cid}):
+                return jsonify({"message": "customerId does not match an existing user"}), 404
+            sets.append("customer_id = :rv_cid")
+            params["rv_cid"] = cid
+    if "technicianId" in d or "technician_id" in d:
+        raw = d.get("technicianId", d.get("technician_id"))
+        if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+            sets.append("technician_id = NULL")
+        else:
+            try:
+                tid = int(str(raw).strip())
+            except (TypeError, ValueError):
+                return jsonify({"message": "technicianId must be an integer"}), 400
+            if not _one("SELECT 1 AS ok FROM technician_profiles WHERE technician_id = :id", {"id": tid}):
+                return jsonify({"message": "technicianId does not match an existing technician"}), 404
+            sets.append("technician_id = :rv_tid")
+            params["rv_tid"] = tid
+    if "rating" in d:
         try:
-            rating = int(rating)
+            rating = int(d["rating"])
         except (TypeError, ValueError):
             return jsonify({"message": "rating must be an integer"}), 400
         if rating < 1 or rating > 5:
             return jsonify({"message": "rating must be between 1 and 5"}), 400
+        sets.append("rating = :rv_rating")
+        params["rv_rating"] = rating
+    if "title" in d:
+        sets.append("title = :rv_title")
+        params["rv_title"] = d.get("title")
+    if "review" in d or "reviewText" in d:
+        sets.append("review_text = :rv_text")
+        params["rv_text"] = d.get("review", d.get("reviewText"))
+    if "status" in d:
+        sets.append("is_active = :rv_active")
+        params["rv_active"] = False if d.get("status") == "inactive" else True
 
-    booking_id = d.get("bookingId") or d.get("booking_id")
-    customer_id = d.get("customerId") or d.get("customer_id")
-    technician_id = d.get("technicianId") or d.get("technician_id")
-
-    def _parse_optional_int(raw, name: str):
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
-            return None, None
-        try:
-            return int(str(raw).strip()), None
-        except (TypeError, ValueError):
-            return None, f"{name} must be an integer"
-
-    booking_id, err = _parse_optional_int(booking_id, "bookingId")
-    if err:
-        return jsonify({"message": err}), 400
-    customer_id, err = _parse_optional_int(customer_id, "customerId")
-    if err:
-        return jsonify({"message": err}), 400
-    technician_id, err = _parse_optional_int(technician_id, "technicianId")
-    if err:
-        return jsonify({"message": err}), 400
-
-    if booking_id is not None and not _one("SELECT 1 AS ok FROM bookings WHERE booking_id = :id", {"id": booking_id}):
-        return jsonify({"message": "bookingId does not match an existing booking"}), 404
-    if customer_id is not None and not _one("SELECT 1 AS ok FROM users WHERE user_id = :id", {"id": customer_id}):
-        return jsonify({"message": "customerId does not match an existing user"}), 404
-    if technician_id is not None and not _one("SELECT 1 AS ok FROM technician_profiles WHERE technician_id = :id", {"id": technician_id}):
-        return jsonify({"message": "technicianId does not match an existing technician"}), 404
-
-    _q(
-        """
-        UPDATE reviews
-        SET booking_id = COALESCE(:booking_id, booking_id),
-            customer_id = COALESCE(:customer_id, customer_id),
-            technician_id = COALESCE(:technician_id, technician_id),
-            rating = COALESCE(:rating, rating),
-            title = COALESCE(:title, title),
-            review_text = COALESCE(:review_text, review_text),
-            is_active = COALESCE(:is_active, is_active),
-            updated_at = NOW()
-        WHERE review_id = :id
-        """,
-        {
-            "id": review_id,
-            "booking_id": booking_id,
-            "customer_id": customer_id,
-            "technician_id": technician_id,
-            "rating": rating,
-            "title": d.get("title"),
-            "review_text": d.get("review") or d.get("reviewText"),
-            "is_active": (False if d.get("status") == "inactive" else True) if "status" in d else None,
-        },
-    )
+    if sets:
+        sets.append("updated_at = NOW()")
+        _exec(f"UPDATE reviews SET {', '.join(sets)} WHERE review_id = :id", params)
     db.session.commit()
     return get_review(review_id)
 

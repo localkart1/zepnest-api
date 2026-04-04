@@ -2,6 +2,11 @@
 Web login: email + password against ``users.password_hash`` (Werkzeug hashes).
 
 JWT access tokens use ``typ: web_user`` (distinct from mobile OTP tokens).
+
+Register accepts ``role`` (or ``userType`` / ``user_type``): ``customer`` | ``technician`` | ``admin``
+(stored as ``users.user_type``). Technicians also get a minimal ``technician_profiles`` row.
+
+Restrict allowed roles with env ``WEB_REGISTER_ALLOWED_ROLES`` (comma-separated, default all three).
 """
 
 from __future__ import annotations
@@ -17,12 +22,18 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from api import db
+from api.models.technician import Technician
 from api.models.user import User
 
 web_auth_bp = Blueprint("web_auth", __name__, url_prefix="/api/auth")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-key")
 WEB_JWT_EXPIRES_HOURS = int(os.getenv("WEB_JWT_EXPIRES_HOURS", "24"))
+WEB_REGISTER_ALLOWED_ROLES = frozenset(
+    x.strip().lower()
+    for x in os.getenv("WEB_REGISTER_ALLOWED_ROLES", "customer,technician,admin").split(",")
+    if x.strip()
+)
 
 
 def _normalize_email(email: str | None) -> str:
@@ -87,6 +98,49 @@ def _user_by_email(email: str):
     return User.query.filter(func.lower(User.email) == email).first()
 
 
+def _parse_register_role(data: dict) -> tuple[str | None, tuple[int, dict] | None]:
+    """
+    Resolve ``users.user_type`` from JSON. Returns (user_type, None) or (None, (http_code, body_dict)).
+    """
+    has_key = any(k in data for k in ("role", "userType", "user_type"))
+    if not has_key:
+        user_type = "customer"
+    else:
+        raw = data.get("role")
+        if raw is None and "userType" in data:
+            raw = data.get("userType")
+        if raw is None and "user_type" in data:
+            raw = data.get("user_type")
+        if not isinstance(raw, str) or not raw.strip():
+            return None, (400, {"message": "role must be a non-empty string"})
+        user_type = raw.strip().lower()
+        if user_type not in ("customer", "technician", "admin"):
+            return None, (400, {"message": "role must be one of: customer, technician, admin"})
+    if user_type not in WEB_REGISTER_ALLOWED_ROLES:
+        return None, (403, {"message": f"Registration as '{user_type}' is not allowed on this server"})
+    return user_type, None
+
+
+def _coerce_specialization(raw) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        s = ", ".join(str(x).strip() for x in raw if x is not None and str(x).strip())
+    else:
+        s = str(raw).strip()
+    return s or None
+
+
+def _coerce_certification(raw) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        s = ", ".join(str(x).strip() for x in raw if x is not None and str(x).strip())
+    else:
+        s = str(raw).strip()
+    return s or None
+
+
 @web_auth_bp.post("/register")
 def register():
     data = _json_body()
@@ -94,6 +148,7 @@ def register():
     password = data.get("password") or ""
     first_name = (data.get("firstName") or data.get("first_name") or "").strip() or None
     last_name = (data.get("lastName") or data.get("last_name") or "").strip() or None
+    phone = (data.get("phone") or "").strip() or None
 
     if not email or "@" not in email:
         return jsonify({"message": "Valid email is required"}), 400
@@ -102,6 +157,11 @@ def register():
     if len(password) > 256:
         return jsonify({"message": "Password is too long"}), 400
 
+    user_type, role_err = _parse_register_role(data)
+    if role_err:
+        code, body = role_err
+        return jsonify(body), code
+
     if _user_by_email(email):
         return jsonify({"message": "Email already registered"}), 409
 
@@ -109,13 +169,38 @@ def register():
         email=email,
         first_name=first_name,
         last_name=last_name,
-        user_type="customer",
+        phone=phone,
+        user_type=user_type,
         loyalty_points=0,
         is_active=True,
     )
     user.set_password(password)
     db.session.add(user)
     try:
+        db.session.flush()
+        if user_type == "technician":
+            exp_raw = data.get("experienceYears", data.get("experience", 0))
+            try:
+                experience_years = int(exp_raw)
+            except (TypeError, ValueError):
+                experience_years = 0
+            hourly = data.get("hourlyRate")
+            try:
+                hourly_rate = float(hourly) if hourly is not None and str(hourly).strip() != "" else None
+            except (TypeError, ValueError):
+                hourly_rate = None
+            tech_status = (data.get("status") or "available").strip() or "available"
+            cert_raw = data.get("certifications", data.get("certification"))
+            tech = Technician(
+                user_id=user.user_id,
+                specialization=_coerce_specialization(data.get("specialization")),
+                experience_years=experience_years,
+                bio=(data.get("bio") or "").strip() or None,
+                hourly_rate=hourly_rate,
+                certification=_coerce_certification(cert_raw),
+                status=tech_status,
+            )
+            db.session.add(tech)
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
