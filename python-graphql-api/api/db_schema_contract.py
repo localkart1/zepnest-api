@@ -29,6 +29,7 @@ API_REST_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
             "updated_at",
             "password_hash",
+            "internal_notes",
         }
     ),
     "technician_profiles": frozenset(

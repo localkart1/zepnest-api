@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 
 from flask import Blueprint, Response, jsonify, request, send_file
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.exc import IntegrityError
 
@@ -96,6 +96,268 @@ def _one(sql: str, params=None):
     if not result.returns_rows:
         return None
     return result.mappings().first()
+
+
+def _exec(sql: str, params=None) -> None:
+    db.session.execute(text(sql), params or {})
+
+
+def _coerce_internal_notes_value(data: dict) -> str:
+    if "internalNotes" not in data and "internal_notes" not in data:
+        return ""
+    v = data.get("internalNotes", data.get("internal_notes"))
+    if v is None:
+        return ""
+    return v if isinstance(v, str) else str(v)
+
+
+def _line1_from_admin_address(addr: dict) -> str:
+    line1 = (addr.get("line1") or addr.get("addressLine1") or "").strip()
+    if line1:
+        return line1
+    parts = []
+    door = (addr.get("doorNo") or addr.get("door_no") or "").strip()
+    if door:
+        parts.append(door)
+    street = (addr.get("street") or "").strip()
+    if street:
+        parts.append(street)
+    line1 = ", ".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
+    lm = (addr.get("landmark") or "").strip()
+    if lm:
+        line1 = f"{line1}, Near {lm}" if line1 else f"Near {lm}"
+    return line1
+
+
+def _insert_addresses_for_customer(user_id: int, addresses) -> None:
+    """Persist admin-portal style addresses (street, doorNo, zipCode, isPrimary, …)."""
+    if not isinstance(addresses, list) or not addresses:
+        return
+    rows: list[dict] = []
+    for addr in addresses:
+        if not isinstance(addr, dict):
+            continue
+        l1 = _line1_from_admin_address(addr)
+        if not l1:
+            continue
+        label = (addr.get("nickName") or addr.get("label") or "").strip() or "Home"
+        l2 = (addr.get("line2") or addr.get("addressLine2") or "").strip() or None
+        city = (addr.get("city") or "").strip() or None
+        state = (addr.get("state") or "").strip() or None
+        zip_c = (addr.get("zipCode") or addr.get("zip") or "").strip() or None
+        country = (addr.get("country") or "India").strip() or "India"
+        atype = (addr.get("addressType") or "home").strip() or "home"
+        isd = bool(addr.get("isPrimary", addr.get("isDefault", False)))
+        aphone = (addr.get("phone") or "").strip()
+        if aphone and not l2:
+            l2 = aphone
+        rows.append(
+            {
+                "label": label[:64],
+                "l1": l1[:255],
+                "l2": (l2[:255] if l2 else None),
+                "city": city[:100] if city else None,
+                "state": state[:100] if state else None,
+                "zip_c": zip_c[:20] if zip_c else None,
+                "country": country[:80] if country else "India",
+                "atype": atype[:32] if atype else "home",
+                "isd": isd,
+            }
+        )
+    if not rows:
+        return
+    if not any(r["isd"] for r in rows):
+        rows[0]["isd"] = True
+    for r in rows:
+        params_addr = {
+            "uid": user_id,
+            "label": r["label"],
+            "l1": r["l1"],
+            "l2": r["l2"],
+            "city": r["city"],
+            "state": r["state"],
+            "zip": r["zip_c"],
+            "country": r["country"],
+            "atype": r["atype"],
+            "isd": r["isd"],
+        }
+        try:
+            if r["isd"]:
+                _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
+            _exec(
+                """
+                INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd, NOW(), NOW())
+                """,
+                params_addr,
+            )
+        except ProgrammingError as e:
+            if not is_missing_relation_error(e):
+                raise
+            ca_params = {
+                "uid": user_id,
+                "label": r["label"],
+                "l1": r["l1"],
+                "l2": r["l2"],
+                "city": r["city"],
+                "state": r["state"],
+                "zip": r["zip_c"],
+                "country": r["country"],
+                "isd": r["isd"],
+            }
+            if r["isd"]:
+                _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
+            _exec(
+                """
+                INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
+                """,
+                ca_params,
+            )
+
+
+def _parse_address_id(raw) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw > 0 else None
+    s = str(raw).strip()
+    if s.isdigit():
+        i = int(s)
+        return i if i > 0 else None
+    return None
+
+
+def _customer_addresses_table_name() -> str:
+    try:
+        insp = inspect(db.engine)
+        if insp.has_table("addresses"):
+            return "addresses"
+    except Exception:
+        pass
+    return "customer_addresses"
+
+
+def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
+    """
+    Full replace of customer addresses when the client sends ``addresses`` (PUT body).
+    Uses ``addresses`` or ``customer_addresses`` depending on schema.
+    """
+    tbl = _customer_addresses_table_name()
+    rows = [dict(a) for a in addresses if isinstance(a, dict)]
+    if not rows:
+        _exec(f"DELETE FROM {tbl} WHERE user_id = :uid", {"uid": user_id})
+        return
+    if not any(bool(a.get("isPrimary", a.get("isDefault", False))) for a in rows):
+        rows[0] = dict(rows[0])
+        rows[0]["isDefault"] = True
+
+    keep_ids: list[int] = []
+    for addr in rows:
+        aid = _parse_address_id(addr.get("id"))
+        existing = None
+        if aid:
+            existing = _one(
+                f"SELECT id, line1 FROM {tbl} WHERE id = :id AND user_id = :uid",
+                {"id": aid, "uid": user_id},
+            )
+        l1_build = _line1_from_admin_address(addr)
+        l1 = (l1_build[:255] if l1_build else "") or ((existing["line1"] or "").strip() if existing else "")
+        if not l1:
+            continue
+        l1 = l1[:255]
+        label = (addr.get("nickName") or addr.get("label") or "").strip() or "Home"
+        l2_raw = (addr.get("line2") or addr.get("addressLine2") or "").strip() or None
+        aphone = (addr.get("phone") or "").strip()
+        if aphone and not l2_raw:
+            l2_raw = aphone
+        l2 = l2_raw[:255] if l2_raw else None
+        city = (addr.get("city") or "").strip() or None
+        city = city[:100] if city else None
+        state = (addr.get("state") or "").strip() or None
+        state = state[:100] if state else None
+        zip_c = (addr.get("zipCode") or addr.get("zip") or "").strip() or None
+        zip_c = zip_c[:20] if zip_c else None
+        country = ((addr.get("country") or "India").strip() or "India")[:80]
+        atype = ((addr.get("addressType") or "home").strip() or "home")[:32]
+        isd = bool(addr.get("isPrimary", addr.get("isDefault", False)))
+        params_u = {
+            "id": aid,
+            "uid": user_id,
+            "label": label[:64],
+            "l1": l1,
+            "l2": l2,
+            "city": city,
+            "state": state,
+            "zip": zip_c,
+            "country": country,
+            "atype": atype,
+            "isd": isd,
+        }
+        if existing:
+            if isd:
+                _exec(f"UPDATE {tbl} SET is_default = false WHERE user_id = :uid", {"uid": user_id})
+            if tbl == "addresses":
+                _exec(
+                    """
+                    UPDATE addresses SET label=:label, line1=:l1, line2=:l2, city=:city, state=:state,
+                        zip_code=:zip, country=:country, address_type=:atype, is_default=:isd, updated_at = NOW()
+                    WHERE id=:id AND user_id=:uid
+                    """,
+                    params_u,
+                )
+            else:
+                _exec(
+                    """
+                    UPDATE customer_addresses SET label=:label, line1=:l1, line2=:l2, city=:city, state=:state,
+                        zip_code=:zip, country=:country, is_default=:isd, updated_at = NOW()
+                    WHERE id=:id AND user_id=:uid
+                    """,
+                    {k: params_u[k] for k in ("id", "uid", "label", "l1", "l2", "city", "state", "zip", "country", "isd")},
+                )
+            keep_ids.append(int(aid))
+        else:
+            if isd:
+                _exec(f"UPDATE {tbl} SET is_default = false WHERE user_id = :uid", {"uid": user_id})
+            ins_params = {
+                "uid": user_id,
+                "label": label[:64],
+                "l1": l1,
+                "l2": l2,
+                "city": city,
+                "state": state,
+                "zip": zip_c,
+                "country": country,
+                "atype": atype,
+                "isd": isd,
+            }
+            if tbl == "addresses":
+                row = _one(
+                    """
+                    INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
+                    VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd, NOW(), NOW())
+                    RETURNING id
+                    """,
+                    ins_params,
+                )
+            else:
+                row = _one(
+                    """
+                    INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
+                    VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
+                    RETURNING id
+                    """,
+                    {k: ins_params[k] for k in ("uid", "label", "l1", "l2", "city", "state", "zip", "country", "isd")},
+                )
+            if row:
+                keep_ids.append(int(row["id"]))
+
+    if not keep_ids:
+        _exec(f"DELETE FROM {tbl} WHERE user_id = :uid", {"uid": user_id})
+        return
+    placeholders = ", ".join(f":d{i}" for i in range(len(keep_ids)))
+    dparams: dict = {"uid": user_id, **{f"d{i}": keep_ids[i] for i in range(len(keep_ids))}}
+    _exec(f"DELETE FROM {tbl} WHERE user_id = :uid AND id NOT IN ({placeholders})", dparams)
 
 
 def _booking_items_by_booking_ids(booking_ids: list[int]) -> dict[int, list[dict]]:
@@ -240,7 +502,7 @@ def list_customers():
 
     rows = _q(
         """
-        SELECT user_id, first_name, last_name, email, phone, user_type, loyalty_points, is_active, created_at, updated_at
+        SELECT user_id, first_name, last_name, email, phone, user_type, loyalty_points, is_active, internal_notes, created_at, updated_at
         FROM users
         WHERE user_type = 'customer'
           AND (:status IS NULL OR (:status='active' AND is_active=true) OR (:status='inactive' AND is_active=false))
@@ -263,7 +525,7 @@ def list_customers():
             "status": "active" if r["is_active"] else "inactive",
             "tags": [],
             "customerUserType": "subscription",
-            "internalNotes": "",
+            "internalNotes": r.get("internal_notes") or "",
             "lifetimeValue": 0,
             "hasSubscription": False,
             "hasAmc": False,
@@ -280,7 +542,7 @@ def list_customers():
 def get_customer(customer_id: int):
     r = _one(
         """
-        SELECT user_id, first_name, last_name, email, phone, is_active, created_at, updated_at
+        SELECT user_id, first_name, last_name, email, phone, is_active, internal_notes, created_at, updated_at
         FROM users WHERE user_id=:id AND user_type='customer'
         """,
         {"id": customer_id},
@@ -299,7 +561,7 @@ def get_customer(customer_id: int):
             "status": "active" if r["is_active"] else "inactive",
             "tags": [],
             "customerUserType": "subscription",
-            "internalNotes": "",
+            "internalNotes": r.get("internal_notes") or "",
             "lifetimeValue": 0,
             "hasSubscription": False,
             "hasAmc": False,
@@ -313,38 +575,88 @@ def get_customer(customer_id: int):
 @rest_bp.post("/customers")
 def create_customer():
     data = request.get_json(silent=True) or {}
-    row = _one(
-        """
-        INSERT INTO users (email, password_hash, phone, first_name, last_name, user_type, loyalty_points, is_active, created_at, updated_at)
-        VALUES (:email, '', :phone, :first_name, :last_name, 'customer', 0, true, NOW(), NOW())
-        RETURNING user_id, first_name, last_name, email, phone, is_active, created_at, updated_at
-        """,
-        {
-            "email": data.get("email", ""),
-            "phone": data.get("phone", ""),
-            "first_name": data.get("firstName", ""),
-            "last_name": data.get("lastName", ""),
-        },
-    )
+    email = (data.get("email") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    if not email and not phone:
+        return jsonify({"message": "email or phone is required"}), 400
+    is_active = (data.get("status") or "active").strip().lower() != "inactive"
+    try:
+        row = _one(
+            """
+            INSERT INTO users (email, password_hash, phone, first_name, last_name, user_type, loyalty_points, is_active, internal_notes, created_at, updated_at)
+            VALUES (:email, '', :phone, :first_name, :last_name, 'customer', 0, :is_active, :internal_notes, NOW(), NOW())
+            RETURNING user_id, first_name, last_name, email, phone, is_active, created_at, updated_at
+            """,
+            {
+                "email": email,
+                "phone": phone,
+                "first_name": (data.get("firstName") or "").strip(),
+                "last_name": (data.get("lastName") or "").strip(),
+                "is_active": is_active,
+                "internal_notes": _coerce_internal_notes_value(data),
+            },
+        )
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"message": "A customer with this email or phone already exists"}), 409
+    uid = int(row["user_id"])
+    try:
+        _insert_addresses_for_customer(uid, data.get("addresses"))
+    except Exception:
+        db.session.rollback()
+        raise
     db.session.commit()
-    return jsonify({"id": str(row["user_id"]), "firstName": row["first_name"], "lastName": row["last_name"], "email": row["email"], "phone": row["phone"], "status": "active"}), 201
+    body = get_customer(uid)
+    return jsonify(body.get_json()), 201
 
 
 @rest_bp.put("/customers/<int:customer_id>")
 def update_customer(customer_id: int):
     data = request.get_json(silent=True) or {}
-    _q(
-        """
-        UPDATE users
-        SET first_name = COALESCE(:first_name, first_name),
-            last_name = COALESCE(:last_name, last_name),
-            email = COALESCE(:email, email),
-            phone = COALESCE(:phone, phone),
-            updated_at = NOW()
-        WHERE user_id = :id AND user_type='customer'
-        """,
-        {"id": customer_id, "first_name": data.get("firstName"), "last_name": data.get("lastName"), "email": data.get("email"), "phone": data.get("phone")},
-    )
+    if not _one("SELECT user_id FROM users WHERE user_id = :id AND user_type = 'customer'", {"id": customer_id}):
+        return jsonify({"message": "Customer not found"}), 404
+
+    set_parts: list[str] = []
+    params: dict = {"id": customer_id}
+    if "firstName" in data:
+        set_parts.append("first_name = :fn")
+        params["fn"] = (data.get("firstName") or "").strip()
+    if "lastName" in data:
+        set_parts.append("last_name = :ln")
+        params["ln"] = (data.get("lastName") or "").strip()
+    if "email" in data:
+        set_parts.append("email = :em")
+        params["em"] = (data.get("email") or "").strip()
+    if "phone" in data:
+        set_parts.append("phone = :ph")
+        params["ph"] = (data.get("phone") or "").strip()
+    if "status" in data:
+        set_parts.append("is_active = :ia")
+        params["ia"] = (data.get("status") or "active").strip().lower() != "inactive"
+    if "internalNotes" in data or "internal_notes" in data:
+        set_parts.append("internal_notes = :inotes")
+        v = data.get("internalNotes", data.get("internal_notes"))
+        params["inotes"] = "" if v is None else (v if isinstance(v, str) else str(v))
+
+    try:
+        if set_parts:
+            set_parts.append("updated_at = NOW()")
+            _exec(
+                f"UPDATE users SET {', '.join(set_parts)} WHERE user_id = :id AND user_type = 'customer'",
+                params,
+            )
+        elif "addresses" in data and isinstance(data.get("addresses"), list):
+            _exec(
+                "UPDATE users SET updated_at = NOW() WHERE user_id = :id AND user_type = 'customer'",
+                {"id": customer_id},
+            )
+
+        if "addresses" in data and isinstance(data.get("addresses"), list):
+            _sync_addresses_for_customer(customer_id, data["addresses"])
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"message": "A customer with this email or phone already exists"}), 409
+
     db.session.commit()
     return get_customer(customer_id)
 

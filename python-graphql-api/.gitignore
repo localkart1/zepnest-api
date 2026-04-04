@@ -24,6 +24,7 @@ venv/
 ENV/
 .vscode/
 .idea/
+*.code-workspace
 *.db
 *.sqlite
 .DS_Store

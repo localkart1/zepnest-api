@@ -281,10 +281,32 @@
         },
         "responses": {
           "201": {
-            "description": "Created"
+            "description": "Created; same shape as GET /api/customers/{customer_id} (includes persisted addresses).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDetail"
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "description": "A customer with this email or phone already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -307,7 +329,14 @@
         "summary": "Get customer by id",
         "responses": {
           "200": {
-            "description": "Customer"
+            "description": "Customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDetail"
+                }
+              }
+            }
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -319,18 +348,44 @@
           "Customers"
         ],
         "summary": "Update customer",
+        "description": "Partial update: only keys present in the body are applied. If `addresses` is sent, it replaces all addresses for the customer (send `[]` to clear). Requires `users.internal_notes` column — run scripts/add_users_internal_notes.sql if missing.",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/CustomerUpdate"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Updated customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Duplicate email or phone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -2154,8 +2209,182 @@
           }
         }
       },
+      "CustomerAddress": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "line1": {
+            "type": "string"
+          },
+          "line2": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "zipCode": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "isDefault": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CustomerDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerAddress"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "customerUserType": {
+            "type": "string"
+          },
+          "internalNotes": {
+            "type": "string"
+          },
+          "lifetimeValue": {
+            "type": "number"
+          },
+          "hasSubscription": {
+            "type": "boolean"
+          },
+          "hasAmc": {
+            "type": "boolean"
+          },
+          "outstandingAmount": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "CustomerCreateAddress": {
+        "type": "object",
+        "description": "Admin-portal address shape. line1 / addressLine1 take precedence; otherwise line1 is built from doorNo, street, and landmark.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Client-only temp id; ignored by the server."
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "nickName": {
+            "type": "string",
+            "description": "Used as the address label when set."
+          },
+          "phone": {
+            "type": "string",
+            "description": "If line2 is empty, stored as line2."
+          },
+          "doorNo": {
+            "type": "string"
+          },
+          "street": {
+            "type": "string"
+          },
+          "landmark": {
+            "type": "string"
+          },
+          "zipCode": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "lat": {
+            "type": "string"
+          },
+          "lng": {
+            "type": "string"
+          },
+          "isPrimary": {
+            "type": "boolean",
+            "description": "Maps to is_default; isDefault is an alias."
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "line1": {
+            "type": "string"
+          },
+          "addressLine1": {
+            "type": "string"
+          },
+          "line2": {
+            "type": "string"
+          },
+          "addressLine2": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "addressType": {
+            "type": "string"
+          }
+        }
+      },
       "CustomerCreate": {
         "type": "object",
+        "description": "At least one of email or phone (non-empty after trim) is required.",
         "properties": {
           "email": {
             "type": "string"
@@ -2168,6 +2397,59 @@
           },
           "lastName": {
             "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive"
+            ],
+            "default": "active"
+          },
+          "internalNotes": {
+            "type": "string",
+            "description": "Stored in users.internal_notes (run scripts/add_users_internal_notes.sql if the column is missing)."
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerCreateAddress"
+            }
+          }
+        }
+      },
+      "CustomerUpdate": {
+        "type": "object",
+        "description": "Partial update. Include `addresses` only when replacing the full address list.",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive"
+            ]
+          },
+          "internalNotes": {
+            "type": "string",
+            "description": "Stored in users.internal_notes."
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerCreateAddress"
+            }
           }
         }
       },

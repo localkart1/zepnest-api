@@ -1,0 +1,386 @@
+{
+  "info": {
+    "_postman_id": "a3e7b2c1-9f4d-4a1e-b2c3-d4e5f6789012",
+    "name": "Web API — Full roundtrip (auth + REST)",
+    "description": "python-graphql-api web flow for admin-style REST.\n\n**Run with Collection Runner in order** (top to bottom).\n\n**Variables** (collection → Variables):\n- `baseUrl` — e.g. `http://localhost:5002`\n- `registerEmail`, `registerPassword` — web auth (min 8 chars)\n\n**Auto-set by tests:** `accessToken`, `customerId`, `addressId`, `orderId`, `technicianId`\n\n**Notes:**\n- Register may return **409** if the email exists; run **Login** anyway.\n- **Deletes:** order **12** before customer **13** (FK on `bookings.customer_id`).\n- Ensure `users.internal_notes` exists if create/update customer uses notes (`scripts/add_users_internal_notes.sql`).\n- If `POST /api/technicians` fails with duplicate `technician_id`, fix the Postgres sequence on `technician_profiles`.\n- REST routes are open in code; Bearer is sent for parity with a secured gateway.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5002" },
+    { "key": "registerEmail", "value": "web.postman.roundtrip@example.test" },
+    { "key": "registerPassword", "value": "PostmanTest!8" },
+    { "key": "accessToken", "value": "" },
+    { "key": "customerId", "value": "" },
+    { "key": "addressId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "technicianId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created or 409 exists', function () {",
+              "  pm.expect([201, 409]).to.include(pm.response.code);",
+              "});",
+              "if (pm.response.code === 201) {",
+              "  var j = pm.response.json();",
+              "  if (j && j.accessToken) {",
+              "    pm.collectionVariables.set('accessToken', j.accessToken);",
+              "  }",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{registerEmail}}\",\n  \"password\": \"{{registerPassword}}\",\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Web\"\n}"
+        },
+        "url": "{{baseUrl}}/api/auth/register",
+        "description": "POST /api/auth/register — creates `users` row with password hash; may return token on 201."
+      }
+    },
+    {
+      "name": "2. Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.accessToken, 'accessToken').to.be.ok;",
+              "pm.collectionVariables.set('accessToken', j.accessToken);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{registerEmail}}\",\n  \"password\": \"{{registerPassword}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/auth/login",
+        "description": "POST /api/auth/login — stores JWT in collection variable `accessToken`."
+      }
+    },
+    {
+      "name": "3. Get technician list",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j).to.have.property('data');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/technicians?page=1&limit=10",
+        "description": "GET /api/technicians"
+      }
+    },
+    {
+      "name": "4. Get customer list",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/customers?page=1&limit=10",
+        "description": "GET /api/customers"
+      }
+    },
+    {
+      "name": "5. Get orders list",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/orders?page=1&limit=10",
+        "description": "GET /api/orders"
+      }
+    },
+    {
+      "name": "6. Create customer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "pm.collectionVariables.set('customerId', String(j.id));",
+              "if (j.addresses && j.addresses.length && j.addresses[0].id) {",
+              "  pm.collectionVariables.set('addressId', String(j.addresses[0].id));",
+              "} else {",
+              "  pm.collectionVariables.set('addressId', '');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Customer\",\n  \"email\": \"customer.{{$guid}}@example.test\",\n  \"phone\": \"9800000000\",\n  \"status\": \"active\",\n  \"internalNotes\": \"from postman collection\",\n  \"addresses\": [\n    {\n      \"street\": \"1 Collection Street\",\n      \"city\": \"Chennai\",\n      \"zipCode\": \"600001\",\n      \"isPrimary\": true\n    }\n  ]\n}"
+        },
+        "url": "{{baseUrl}}/api/customers",
+        "description": "POST /api/customers — saves `customerId` and `addressId` for later requests."
+      }
+    },
+    {
+      "name": "7. Create order",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "pm.collectionVariables.set('orderId', String(j.id));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerId\": {{customerId}},\n  \"totalAmount\": 99.5,\n  \"address\": \"1 Collection Street\",\n  \"customerNotes\": \"postman roundtrip\"\n}"
+        },
+        "url": "{{baseUrl}}/api/orders",
+        "description": "POST /api/orders — no bookingItems (avoids services catalog dependency). Saves `orderId`."
+      }
+    },
+    {
+      "name": "8. Create technician",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "pm.collectionVariables.set('technicianId', String(j.id));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Technician\",\n  \"email\": \"tech.{{$guid}}@example.test\",\n  \"phone\": \"9700000000\",\n  \"specialization\": [\"plumbing\"],\n  \"experience\": 2,\n  \"status\": \"available\",\n  \"certifications\": [\"DemoCert\"]\n}"
+        },
+        "url": "{{baseUrl}}/api/technicians",
+        "description": "POST /api/technicians — saves `technicianId`."
+      }
+    },
+    {
+      "name": "9. Update customer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Postman\",\n  \"lastName\": \"CustomerUpdated\",\n  \"status\": \"active\",\n  \"internalNotes\": \"updated via postman\",\n  \"addresses\": [\n    {\n      \"id\": \"{{addressId}}\",\n      \"street\": \"2 Updated Street\",\n      \"city\": \"Chennai\",\n      \"zipCode\": \"600002\",\n      \"isPrimary\": true\n    }\n  ]\n}"
+        },
+        "url": "{{baseUrl}}/api/customers/{{customerId}}",
+        "description": "PUT /api/customers/{id} — uses `addressId` from step 6. If `addressId` is empty, clear it in Variables or send a new address without `id`."
+      }
+    },
+    {
+      "name": "10. Update order",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"assigned\",\n  \"technicianId\": {{technicianId}},\n  \"customerNotes\": \"order updated via postman\"\n}"
+        },
+        "url": "{{baseUrl}}/api/orders/{{orderId}}",
+        "description": "PUT /api/orders/{id} — ensure `BOOKING_STATUS_*` env matches your DB enum."
+      }
+    },
+    {
+      "name": "11. Update technician",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Postman\",\n  \"lastName\": \"TechUpdated\",\n  \"status\": \"available\",\n  \"experience\": 3\n}"
+        },
+        "url": "{{baseUrl}}/api/technicians/{{technicianId}}",
+        "description": "PUT /api/technicians/{id}"
+      }
+    },
+    {
+      "name": "12. Delete order",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('204 No Content', function () { pm.response.to.have.status(204); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/orders/{{orderId}}",
+        "description": "DELETE /api/orders/{id} — run **before** delete customer (FK)."
+      }
+    },
+    {
+      "name": "13. Delete customer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('204 No Content', function () { pm.response.to.have.status(204); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/customers/{{customerId}}",
+        "description": "DELETE /api/customers/{id}"
+      }
+    },
+    {
+      "name": "14. Delete technician",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('204 No Content', function () { pm.response.to.have.status(204); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/technicians/{{technicianId}}",
+        "description": "DELETE /api/technicians/{id}"
+      }
+    }
+  ]
+}

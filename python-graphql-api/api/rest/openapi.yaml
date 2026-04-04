@@ -149,8 +149,16 @@ paths:
             schema: { $ref: "#/components/schemas/CustomerCreate" }
       responses:
         "201":
-          description: Created
+          description: Created; same shape as GET /api/customers/{customer_id}
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerDetail" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Duplicate email or phone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorMessage" }
 
   /api/customers/{customer_id}:
     parameters:
@@ -164,16 +172,30 @@ paths:
       responses:
         "200":
           description: Customer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerDetail" }
         "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [Customers]
       summary: Update customer
+      description: Partial update. If `addresses` is present, it replaces all addresses (use `[]` to clear). Run scripts/add_users_internal_notes.sql if internal_notes column is missing.
       requestBody:
         content:
           application/json:
-            schema: { type: object }
+            schema: { $ref: "#/components/schemas/CustomerUpdate" }
       responses:
-        "200": { description: OK }
+        "200":
+          description: Updated customer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Duplicate email or phone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorMessage" }
     delete:
       tags: [Customers]
       summary: Delete customer
@@ -830,13 +852,94 @@ components:
               imageUrl: { type: string }
               notes: { type: string }
 
+    CustomerAddress:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        line1: { type: string }
+        line2: { type: string }
+        city: { type: string }
+        state: { type: string }
+        zipCode: { type: string }
+        country: { type: string }
+        isDefault: { type: boolean }
+
+    CustomerDetail:
+      type: object
+      properties:
+        id: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: string, nullable: true }
+        phone: { type: string }
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerAddress" }
+        status: { type: string, enum: [active, inactive] }
+        tags: { type: array, items: { type: string } }
+        customerUserType: { type: string }
+        internalNotes: { type: string }
+        lifetimeValue: { type: number }
+        hasSubscription: { type: boolean }
+        hasAmc: { type: boolean }
+        outstandingAmount: { type: number }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+
+    CustomerCreateAddress:
+      type: object
+      description: Admin-style address; line1/addressLine1 or doorNo+street+landmark.
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        nickName: { type: string }
+        phone: { type: string }
+        doorNo: { type: string }
+        street: { type: string }
+        landmark: { type: string }
+        zipCode: { type: string }
+        state: { type: string }
+        city: { type: string }
+        lat: { type: string }
+        lng: { type: string }
+        isPrimary: { type: boolean }
+        isDefault: { type: boolean }
+        line1: { type: string }
+        addressLine1: { type: string }
+        line2: { type: string }
+        addressLine2: { type: string }
+        label: { type: string }
+        country: { type: string }
+        addressType: { type: string }
+
     CustomerCreate:
       type: object
+      description: At least one of email or phone (non-empty) is required.
       properties:
         email: { type: string }
         phone: { type: string }
         firstName: { type: string }
         lastName: { type: string }
+        status: { type: string, enum: [active, inactive], default: active }
+        internalNotes: { type: string }
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerCreateAddress" }
+
+    CustomerUpdate:
+      type: object
+      description: Partial update; `addresses` replaces the full list when sent.
+      properties:
+        email: { type: string }
+        phone: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        status: { type: string, enum: [active, inactive] }
+        internalNotes: { type: string }
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerCreateAddress" }
 
     PaginatedCustomers:
       type: object
