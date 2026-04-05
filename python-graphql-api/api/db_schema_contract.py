@@ -388,6 +388,22 @@ API_MOBILE_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "cart_items": frozenset(
+        {
+            "id",
+            "user_id",
+            "service_id",
+            "quantity",
+            "unit_price",
+            "total_price",
+            "notes",
+            "voice_url",
+            "video_url",
+            "image_url",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "mobile_otp_sessions": frozenset(
         {"id", "phone", "otp_hash", "expires_at", "consumed", "created_at"}
     ),

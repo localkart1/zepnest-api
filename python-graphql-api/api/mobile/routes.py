@@ -310,6 +310,22 @@ def _booking_to_response(r: dict, booking_items: list[dict] | None = None) -> di
     }
 
 
+def _booking_use_cart(data: dict) -> bool:
+    """True when client asks to build the booking from persisted cart lines."""
+    for key in ("fromCart", "useCart", "from_cart"):
+        if key not in data:
+            continue
+        v = data[key]
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            return v.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(v)
+    return False
+
+
 def _collect_service_ids(data: dict) -> list[int]:
     ids: list[int] = []
     raw_list = data.get("serviceIds") or data.get("services")
@@ -334,6 +350,283 @@ def _collect_service_ids(data: dict) -> list[int]:
             seen.add(i)
             out.append(i)
     return out
+
+
+def _cart_row_to_api_dict(r: dict) -> dict:
+    return {
+        "id": str(r["id"]),
+        "serviceId": int(r["service_id"]),
+        "serviceName": r.get("service_name") or "",
+        "description": r.get("service_description") or "",
+        "quantity": int(r["quantity"] or 1),
+        "unitPrice": float(r["unit_price"] or 0),
+        "totalPrice": float(r["total_price"] or 0),
+        "notes": r.get("notes") or "",
+        "voiceNoteUrl": r.get("voice_url") or None,
+        "videoUrl": r.get("video_url") or None,
+        "imageUrl": r.get("image_url") or None,
+        "createdAt": r["created_at"].isoformat() if r.get("created_at") else None,
+        "updatedAt": r["updated_at"].isoformat() if r.get("updated_at") else None,
+    }
+
+
+def _fetch_cart_rows(user_id: int) -> list[dict]:
+    """Cart lines joined with services (active services only)."""
+    return _q(
+        """
+        SELECT ci.id, ci.user_id, ci.service_id, ci.quantity, ci.unit_price, ci.total_price, ci.notes,
+               ci.voice_url, ci.video_url, ci.image_url, ci.created_at, ci.updated_at,
+               s.name AS service_name, COALESCE(s.description, '') AS service_description, s.base_price
+        FROM cart_items ci
+        INNER JOIN services s ON s.service_id = ci.service_id AND s.is_active = true
+        WHERE ci.user_id = :uid
+        ORDER BY ci.id ASC
+        """,
+        {"uid": user_id},
+    )
+
+
+def _clear_cart(user_id: int) -> None:
+    _exec("DELETE FROM cart_items WHERE user_id = :uid", {"uid": user_id})
+
+
+def _parse_positive_int(raw, default: int = 1) -> int:
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return v if v > 0 else default
+
+
+@mobile_bp.get("/cart")
+@require_mobile_auth
+def get_cart():
+    """List cart lines for the logged-in customer."""
+    try:
+        rows = _fetch_cart_rows(g.mobile_user_id)
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify(
+                {
+                    "message": "cart_items table missing",
+                    "hint": "Run scripts/create_cart_items_table.sql on your database",
+                }
+            ), 501
+        raise
+    items = [_cart_row_to_api_dict(dict(r)) for r in rows]
+    subtotal = sum(float(x["totalPrice"]) for x in items)
+    return jsonify({"items": items, "itemCount": len(items), "subtotal": subtotal}), 200
+
+
+@mobile_bp.post("/cart/items")
+@require_mobile_auth
+def add_or_update_cart_item():
+    """
+    Add or replace a line for one service (upsert on user_id + service_id).
+    Body: serviceId (required), quantity (default 1), notes, voiceNoteUrl, videoUrl, imageUrl
+    """
+    data = request.get_json(silent=True) or {}
+    sid_raw = data.get("serviceId") or data.get("service_id")
+    if sid_raw is None:
+        return jsonify({"message": "serviceId is required"}), 400
+    try:
+        service_id = int(sid_raw)
+    except (TypeError, ValueError):
+        return jsonify({"message": "serviceId must be an integer"}), 400
+    qty = _parse_positive_int(data.get("quantity"), 1)
+    notes = (data.get("notes") or "").strip() or None
+    voice = (data.get("voiceNoteUrl") or data.get("voiceUrl") or "").strip() or None
+    video = (data.get("videoUrl") or "").strip() or None
+    image = (data.get("imageUrl") or "").strip() or None
+
+    svc = _one(
+        "SELECT service_id, base_price FROM services WHERE service_id = :sid AND is_active = true",
+        {"sid": service_id},
+    )
+    if not svc:
+        return jsonify({"message": "Service not found or inactive"}), 404
+    unit = float(svc["base_price"] or 0)
+    total = round(unit * qty, 2)
+
+    try:
+        existing = _one(
+            "SELECT id FROM cart_items WHERE user_id = :u AND service_id = :s",
+            {"u": g.mobile_user_id, "s": service_id},
+        )
+        if existing:
+            _exec(
+                """
+                UPDATE cart_items SET quantity = :qty, unit_price = :unit, total_price = :tot,
+                    notes = :notes, voice_url = :v, video_url = :vid, image_url = :img, updated_at = NOW()
+                WHERE id = :id AND user_id = :u
+                """,
+                {
+                    "id": existing["id"],
+                    "u": g.mobile_user_id,
+                    "qty": qty,
+                    "unit": unit,
+                    "tot": total,
+                    "notes": notes,
+                    "v": voice,
+                    "vid": video,
+                    "img": image,
+                },
+            )
+            cid = int(existing["id"])
+        else:
+            row = _one(
+                """
+                INSERT INTO cart_items (user_id, service_id, quantity, unit_price, total_price, notes,
+                    voice_url, video_url, image_url, created_at, updated_at)
+                VALUES (:u, :sid, :qty, :unit, :tot, :notes, :v, :vid, :img, NOW(), NOW())
+                RETURNING id
+                """,
+                {
+                    "u": g.mobile_user_id,
+                    "sid": service_id,
+                    "qty": qty,
+                    "unit": unit,
+                    "tot": total,
+                    "notes": notes,
+                    "v": voice,
+                    "vid": video,
+                    "img": image,
+                },
+            )
+            cid = int(row["id"]) if row else 0
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify(
+                {
+                    "message": "cart_items table missing",
+                    "hint": "Run scripts/create_cart_items_table.sql",
+                }
+            ), 501
+        raise
+
+    r = _one(
+        """
+        SELECT ci.id, ci.user_id, ci.service_id, ci.quantity, ci.unit_price, ci.total_price, ci.notes,
+               ci.voice_url, ci.video_url, ci.image_url, ci.created_at, ci.updated_at,
+               s.name AS service_name, COALESCE(s.description, '') AS service_description, s.base_price
+        FROM cart_items ci
+        INNER JOIN services s ON s.service_id = ci.service_id
+        WHERE ci.id = :id AND ci.user_id = :u
+        """,
+        {"id": cid, "u": g.mobile_user_id},
+    )
+    db.session.commit()
+    if not r:
+        return jsonify({"message": "Cart item not found after save"}), 500
+    return jsonify(_cart_row_to_api_dict(dict(r))), 200
+
+
+@mobile_bp.put("/cart/items/<int:cart_item_id>")
+@require_mobile_auth
+def update_cart_item(cart_item_id: int):
+    """Update quantity and/or notes/media for one cart line."""
+    data = request.get_json(silent=True) or {}
+    owner = _one(
+        "SELECT id, service_id, quantity, notes, voice_url, video_url, image_url FROM cart_items WHERE id = :id AND user_id = :u",
+        {"id": cart_item_id, "u": g.mobile_user_id},
+    )
+    if not owner:
+        return jsonify({"message": "Cart item not found"}), 404
+    cur_qty = int(owner["quantity"] or 1)
+    qty = _parse_positive_int(data.get("quantity"), cur_qty) if "quantity" in data else cur_qty
+    svc = _one(
+        "SELECT base_price FROM services WHERE service_id = :sid AND is_active = true",
+        {"sid": int(owner["service_id"])},
+    )
+    if not svc:
+        return jsonify({"message": "Service no longer available"}), 400
+    unit = float(svc["base_price"] or 0)
+    total = round(unit * qty, 2)
+    notes = owner.get("notes")
+    voice = owner.get("voice_url")
+    video = owner.get("video_url")
+    image = owner.get("image_url")
+    if "notes" in data:
+        notes = (data.get("notes") or "").strip() or None
+    if "voiceNoteUrl" in data or "voiceUrl" in data:
+        voice = (data.get("voiceNoteUrl") or data.get("voiceUrl") or "").strip() or None
+    if "videoUrl" in data:
+        video = (data.get("videoUrl") or "").strip() or None
+    if "imageUrl" in data:
+        image = (data.get("imageUrl") or "").strip() or None
+
+    try:
+        _exec(
+            """
+            UPDATE cart_items SET quantity = :qty, unit_price = :unit, total_price = :tot,
+                notes = :notes, voice_url = :v, video_url = :vid, image_url = :img, updated_at = NOW()
+            WHERE id = :id AND user_id = :u
+            """,
+            {
+                "id": cart_item_id,
+                "u": g.mobile_user_id,
+                "qty": qty,
+                "unit": unit,
+                "tot": total,
+                "notes": notes,
+                "v": voice,
+                "vid": video,
+                "img": image,
+            },
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify(
+                {"message": "cart_items table missing", "hint": "Run scripts/create_cart_items_table.sql"}
+            ), 501
+        raise
+
+    r = _one(
+        """
+        SELECT ci.id, ci.user_id, ci.service_id, ci.quantity, ci.unit_price, ci.total_price, ci.notes,
+               ci.voice_url, ci.video_url, ci.image_url, ci.created_at, ci.updated_at,
+               s.name AS service_name, COALESCE(s.description, '') AS service_description, s.base_price
+        FROM cart_items ci
+        INNER JOIN services s ON s.service_id = ci.service_id
+        WHERE ci.id = :id AND ci.user_id = :u
+        """,
+        {"id": cart_item_id, "u": g.mobile_user_id},
+    )
+    db.session.commit()
+    if not r:
+        return jsonify({"message": "Cart item not found"}), 404
+    return jsonify(_cart_row_to_api_dict(dict(r))), 200
+
+
+@mobile_bp.delete("/cart/items/<int:cart_item_id>")
+@require_mobile_auth
+def delete_cart_item(cart_item_id: int):
+    try:
+        r = _one(
+            "DELETE FROM cart_items WHERE id = :id AND user_id = :u RETURNING id",
+            {"id": cart_item_id, "u": g.mobile_user_id},
+        )
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify({"message": "cart_items table missing"}), 501
+        raise
+    db.session.commit()
+    if not r:
+        return jsonify({"message": "Cart item not found"}), 404
+    return jsonify({"id": str(cart_item_id), "message": "Removed"}), 200
+
+
+@mobile_bp.delete("/cart")
+@require_mobile_auth
+def clear_cart_endpoint():
+    try:
+        _clear_cart(g.mobile_user_id)
+    except ProgrammingError as e:
+        if is_missing_relation_error(e):
+            return jsonify({"message": "cart_items table missing"}), 501
+        raise
+    db.session.commit()
+    return jsonify({"message": "Cart cleared"}), 200
 
 
 @mobile_bp.post("/auth/request-otp")
@@ -671,22 +964,41 @@ def create_mobile_booking():
     if not address:
         return jsonify({"message": "serviceAddress is required"}), 400
 
-    service_ids = _collect_service_ids(data)
-    if not service_ids:
-        return jsonify({"message": "At least one service is required (serviceId or serviceIds)"}), 400
+    use_cart = _booking_use_cart(data)
+    cart_rows: list = []
+    if use_cart:
+        try:
+            cart_rows = _fetch_cart_rows(g.mobile_user_id)
+        except ProgrammingError as e:
+            if is_missing_relation_error(e):
+                return jsonify(
+                    {
+                        "message": "cart_items table missing",
+                        "hint": "Run scripts/create_cart_items_table.sql",
+                    }
+                ), 501
+            raise
+        if not cart_rows:
+            return jsonify({"message": "Cart is empty; add items via POST /mobile/cart/items first"}), 400
+        service_ids = [int(r["service_id"]) for r in cart_rows]
+        total = sum(float(r["total_price"] or 0) for r in cart_rows)
+    else:
+        service_ids = _collect_service_ids(data)
+        if not service_ids:
+            return jsonify({"message": "At least one service is required (serviceId or serviceIds), or set fromCart true"}), 400
 
-    ph = ",".join([f":s{i}" for i in range(len(service_ids))])
-    sparams = {f"s{i}": service_ids[i] for i in range(len(service_ids))}
-    rows_svcs = _q(
-        f"SELECT service_id, name, base_price FROM services WHERE service_id IN ({ph}) AND is_active = true",
-        sparams,
-    )
-    if len(rows_svcs) != len(service_ids):
-        return jsonify({"message": "One or more services were not found or inactive"}), 404
+        ph = ",".join([f":s{i}" for i in range(len(service_ids))])
+        sparams = {f"s{i}": service_ids[i] for i in range(len(service_ids))}
+        rows_svcs = _q(
+            f"SELECT service_id, name, base_price FROM services WHERE service_id IN ({ph}) AND is_active = true",
+            sparams,
+        )
+        if len(rows_svcs) != len(service_ids):
+            return jsonify({"message": "One or more services were not found or inactive"}), 404
 
-    by_id = {r["service_id"]: r for r in rows_svcs}
-    ordered = [by_id[i] for i in service_ids if i in by_id]
-    total = sum(float(r["base_price"] or 0) for r in ordered)
+        by_id = {r["service_id"]: r for r in rows_svcs}
+        ordered_svcs = [by_id[i] for i in service_ids if i in by_id]
+        total = sum(float(r["base_price"] or 0) for r in ordered_svcs)
 
     # voiceNoteUrl / videoUrl: client uploads to S3 first, then passes HTTPS URLs here.
     description = (data.get("description") or "").strip()
@@ -696,6 +1008,7 @@ def create_mobile_booking():
     extra_notes = (data.get("customerNotes") or data.get("notes") or "").strip()
 
     payload = {
+        "fromCart": use_cart,
         "serviceIds": service_ids,
         "description": description,
         "voiceNoteUrl": voice,
@@ -716,24 +1029,53 @@ def create_mobile_booking():
         """,
         {"n": number, "c": g.mobile_user_id, "a": address, "st": DEFAULT_BOOKING_STATUS, "sub": total, "tot": total, "cn": notes_text},
     )
-    for s in ordered:
-        unit = float(s["base_price"] or 0)
-        _q(
-            """
-            INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, voice_url, video_url, image_url, notes, created_at, updated_at)
-            VALUES (:bid, :sid, 1, :unit, :tot, :voice_url, :video_url, :image_url, :notes, NOW(), NOW())
-            """,
-            {
-                "bid": row["booking_id"],
-                "sid": s["service_id"],
-                "unit": unit,
-                "tot": unit,
-                "voice_url": voice or None,
-                "video_url": video or None,
-                "image_url": image or None,
-                "notes": extra_notes or None,
-            },
-        )
+    if use_cart:
+        for cr in cart_rows:
+            crd = dict(cr)
+            qty = int(crd["quantity"] or 1)
+            unit = float(crd["unit_price"] or 0)
+            line_tot = float(crd["total_price"] or round(unit * qty, 2))
+            line_notes = (crd.get("notes") or "").strip() or None
+            v = (crd.get("voice_url") or "").strip() or None
+            vid = (crd.get("video_url") or "").strip() or None
+            img = (crd.get("image_url") or "").strip() or None
+            _q(
+                """
+                INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, voice_url, video_url, image_url, notes, created_at, updated_at)
+                VALUES (:bid, :sid, :qty, :unit, :tot, :voice_url, :video_url, :image_url, :notes, NOW(), NOW())
+                """,
+                {
+                    "bid": row["booking_id"],
+                    "sid": int(crd["service_id"]),
+                    "qty": qty,
+                    "unit": unit,
+                    "tot": line_tot,
+                    "voice_url": v,
+                    "video_url": vid,
+                    "image_url": img,
+                    "notes": line_notes,
+                },
+            )
+        _clear_cart(g.mobile_user_id)
+    else:
+        for s in ordered_svcs:
+            unit = float(s["base_price"] or 0)
+            _q(
+                """
+                INSERT INTO booking_items (booking_id, service_id, quantity, unit_price, total_price, voice_url, video_url, image_url, notes, created_at, updated_at)
+                VALUES (:bid, :sid, 1, :unit, :tot, :voice_url, :video_url, :image_url, :notes, NOW(), NOW())
+                """,
+                {
+                    "bid": row["booking_id"],
+                    "sid": s["service_id"],
+                    "unit": unit,
+                    "tot": unit,
+                    "voice_url": voice or None,
+                    "video_url": video or None,
+                    "image_url": image or None,
+                    "notes": extra_notes or None,
+                },
+            )
     db.session.commit()
     rdict = dict(row)
     by_booking = _booking_items_by_booking_ids([int(row["booking_id"])])

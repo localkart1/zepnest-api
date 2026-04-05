@@ -1,0 +1,551 @@
+{
+  "info": {
+    "_postman_id": "b4f8c3d2-0a5e-4b2f-d3e4-f5a6b7890123",
+    "name": "Mobile API — Full roundtrip (OTP → cart → booking)",
+    "description": "End-to-end **/mobile** flow for python-graphql-api.\n\n**Run Collection Runner in order** (top to bottom).\n\n**Variables** (collection → Variables):\n- `baseUrl` — e.g. `http://localhost:5002`\n- `mobilePhone` — 10-digit Indian mobile (e.g. `9876543210`)\n- `otp` — optional; auto-filled from `debugOtp` when `MOBILE_OTP_DEBUG=true` on request-otp\n\n**Auto-set by tests:** `otp`, `mobileAccessToken`, `userId`, `addressId`, `addressId2`, `categoryId`, `serviceId1`, `serviceId2`, `bookingId`\n\n**Notes:**\n- **Verify OTP** sends `firstName` / `lastName` (profile bootstrap).\n- **Subcategories** need a **numeric** `categoryId` (from `categories` table). If `/mobile/home` uses legacy string category ids, step 8 may return **400** — set `categoryId` manually in variables or ignore that step.\n- **Cart** needs at least one active service in DB; placeholder media URLs must be **HTTPS** if your app validates.\n- **cart_items** table must exist (`scripts/create_cart_items_table.sql` + alter if needed).\n- Clear cart before re-running booking steps or use a fresh user.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5002" },
+    { "key": "mobilePhone", "value": "9876543210" },
+    { "key": "otp", "value": "" },
+    { "key": "mobileAccessToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "addressId", "value": "" },
+    { "key": "addressId2", "value": "" },
+    { "key": "categoryId", "value": "" },
+    { "key": "serviceId1", "value": "" },
+    { "key": "serviceId2", "value": "" },
+    { "key": "bookingId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Request OTP",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "if (j.debugOtp) { pm.collectionVariables.set('otp', j.debugOtp); }",
+              "pm.test('OTP or debug', function () {",
+              "  pm.expect(j.message || j.debugOtp).to.be.ok;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"phone\": \"{{mobilePhone}}\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/auth/request-otp",
+        "description": "POST /mobile/auth/request-otp — sets `otp` from `debugOtp` when MOBILE_OTP_DEBUG is enabled; otherwise paste SMS OTP into collection variable `otp`."
+      }
+    },
+    {
+      "name": "2. Verify OTP (creates customer + JWT)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.accessToken, 'accessToken').to.be.ok;",
+              "pm.collectionVariables.set('mobileAccessToken', j.accessToken);",
+              "if (j.user && j.user.id) pm.collectionVariables.set('userId', j.user.id);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"phone\": \"{{mobilePhone}}\",\n  \"otp\": \"{{otp}}\",\n  \"firstName\": \"Mobile\",\n  \"lastName\": \"Tester\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/auth/verify-otp",
+        "description": "POST /mobile/auth/verify-otp — profile bootstrap via firstName/lastName; returns Bearer token."
+      }
+    },
+    {
+      "name": "3. Get profile",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.user).to.have.property('phone');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/profile",
+        "description": "GET /mobile/profile — user + addresses after registration."
+      }
+    },
+    {
+      "name": "4. Patch profile",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.user.firstName).to.eql('Mobile');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Mobile\",\n  \"lastName\": \"Tester\",\n  \"email\": \"mobile.tester@example.test\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/profile",
+        "description": "PATCH /mobile/profile — update name/email; optional nested `address` upserts default (not used here)."
+      }
+    },
+    {
+      "name": "5. Add address",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.id).to.be.ok;",
+              "pm.collectionVariables.set('addressId', String(j.id));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Home\",\n  \"line1\": \"100 Test Street\",\n  \"line2\": \"Near Park\",\n  \"city\": \"Bengaluru\",\n  \"state\": \"KA\",\n  \"zipCode\": \"560001\",\n  \"country\": \"India\",\n  \"isDefault\": true\n}"
+        },
+        "url": "{{baseUrl}}/mobile/addresses",
+        "description": "POST /mobile/addresses — saves `addressId` for booking serviceAddress text."
+      }
+    },
+    {
+      "name": "6. Edit address",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.line1).to.include('Updated');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Home\",\n  \"line1\": \"100 Updated Test Street\",\n  \"city\": \"Bengaluru\",\n  \"state\": \"KA\",\n  \"zipCode\": \"560001\",\n  \"country\": \"India\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/addresses/{{addressId}}",
+        "description": "PUT /mobile/addresses/{id}"
+      }
+    },
+    {
+      "name": "7. Add second address (for delete demo)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "pm.collectionVariables.set('addressId2', String(j.id));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Office\",\n  \"line1\": \"200 Office Road\",\n  \"city\": \"Bengaluru\",\n  \"zipCode\": \"560002\",\n  \"country\": \"India\",\n  \"isDefault\": false\n}"
+        },
+        "url": "{{baseUrl}}/mobile/addresses",
+        "description": "POST /mobile/addresses — second row; `addressId2` used for delete."
+      }
+    },
+    {
+      "name": "8. Delete second address",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('204 or 200', function () {",
+              "  pm.expect([200, 204]).to.include(pm.response.code);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/addresses/{{addressId2}}",
+        "description": "DELETE /mobile/addresses/{id} — removes the office row; default home remains."
+      }
+    },
+    {
+      "name": "9. Fetch categories (home)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "var cats = j.categories || [];",
+              "pm.test('has categories array', function () { pm.expect(cats).to.be.an('array'); });",
+              "if (cats.length) {",
+              "  var c = cats[0];",
+              "  pm.collectionVariables.set('categoryId', String(c.id));",
+              "  var svcs = c.services || [];",
+              "  if (svcs.length >= 1) pm.collectionVariables.set('serviceId1', String(svcs[0].id));",
+              "  if (svcs.length >= 2) pm.collectionVariables.set('serviceId2', String(svcs[1].id));",
+              "  else if (svcs.length === 1) pm.collectionVariables.set('serviceId2', String(svcs[0].id));",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/home",
+        "description": "GET /mobile/home — categories + services; sets `categoryId`, `serviceId1`, `serviceId2`."
+      }
+    },
+    {
+      "name": "10. Fetch subcategories",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 list or 400 legacy category id', function () {",
+              "  pm.expect([200, 400]).to.include(pm.response.code);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "  var j = pm.response.json();",
+              "  pm.expect(j).to.be.an('array');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/catalog/subcategories?categoryId={{categoryId}}",
+        "description": "GET /mobile/catalog/subcategories?categoryId= — requires **numeric** categoryId. Legacy home uses string ids → 400 (expected)."
+      }
+    },
+    {
+      "name": "11. Add cart item A (voice + video + image URLs)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "function need(name) {",
+              "  var v = pm.collectionVariables.get(name);",
+              "  if (!v || String(v).trim() === '') {",
+              "    throw new Error('Set ' + name + ' — run step 9 (home) or set manually.');",
+              "  }",
+              "}",
+              "need('serviceId1');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.serviceId).to.be.ok;"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"serviceId\": {{serviceId1}},\n  \"quantity\": 1,\n  \"notes\": \"Cart line A notes\",\n  \"voiceNoteUrl\": \"https://example.com/voice-a.m4a\",\n  \"videoUrl\": \"https://example.com/video-a.mp4\",\n  \"imageUrl\": \"https://example.com/image-a.jpg\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/cart/items",
+        "description": "POST /mobile/cart/items — replace `serviceId` if variables empty (set manually from home)."
+      }
+    },
+    {
+      "name": "12. Add cart item B (different service)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "function need(name) {",
+              "  var v = pm.collectionVariables.get(name);",
+              "  if (!v || String(v).trim() === '') {",
+              "    throw new Error('Set ' + name + ' — run step 9 (home) or set manually.');",
+              "  }",
+              "}",
+              "need('serviceId2');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"serviceId\": {{serviceId2}},\n  \"quantity\": 2,\n  \"notes\": \"Cart line B\",\n  \"voiceNoteUrl\": \"https://example.com/voice-b.m4a\",\n  \"videoUrl\": \"https://example.com/video-b.mp4\",\n  \"imageUrl\": \"https://example.com/image-b.jpg\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/cart/items",
+        "description": "If only one service exists, `serviceId2` equals `serviceId1` — upserts same line (quantity 2)."
+      }
+    },
+    {
+      "name": "13. Check cart (subtotal + lines)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j).to.have.property('items');",
+              "pm.expect(j).to.have.property('subtotal');",
+              "pm.test('itemCount matches', function () {",
+              "  pm.expect(j.itemCount).to.eql(j.items.length);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/cart",
+        "description": "GET /mobile/cart — items, itemCount, subtotal."
+      }
+    },
+    {
+      "name": "14. Fetch cart items (same endpoint)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "if (j.items && j.items.length) {",
+              "  var it = j.items[0];",
+              "  pm.test('line has media fields', function () {",
+              "    pm.expect(it).to.have.property('voiceNoteUrl');",
+              "    pm.expect(it).to.have.property('videoUrl');",
+              "    pm.expect(it).to.have.property('imageUrl');",
+              "  });",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/cart",
+        "description": "GET /mobile/cart again — confirm per-line voice/video/image in response."
+      }
+    },
+    {
+      "name": "15. Create booking from cart",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "var bid = pm.collectionVariables.get('addressId');",
+              "if (!bid) throw new Error('Set addressId — run step 5 (add address) first.');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "if (j.id) pm.collectionVariables.set('bookingId', String(j.id));",
+              "pm.expect(j.services || j.service).to.be.ok;"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"serviceAddress\": \"100 Updated Test Street, Bengaluru, KA 560001\",\n  \"fromCart\": true,\n  \"description\": \"Booking from cart roundtrip\",\n  \"customerNotes\": \"Thanks!\"\n}"
+        },
+        "url": "{{baseUrl}}/mobile/bookings",
+        "description": "POST /mobile/bookings — `fromCart: true` loads cart lines, creates booking_items with quantities/media, clears cart."
+      }
+    },
+    {
+      "name": "16. Get booking by id (booking + items)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "var bid = pm.collectionVariables.get('bookingId');",
+              "if (!bid) throw new Error('Set bookingId — run step 15 first.');"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.test('has services or service', function () {",
+              "  pm.expect(j.services || j.service).to.be.ok;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/bookings/{{bookingId}}",
+        "description": "GET /mobile/bookings/{id} — detail with booking line items."
+      }
+    },
+    {
+      "name": "17. List bookings",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.data).to.be.an('array');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+        ],
+        "url": "{{baseUrl}}/mobile/bookings?page=1&limit=20",
+        "description": "GET /mobile/bookings — paginated list."
+      }
+    }
+  ]
+}

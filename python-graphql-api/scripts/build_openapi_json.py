@@ -118,6 +118,86 @@ MOBILE_PATHS = {
             "responses": {"200": {"description": "OK"}},
         }
     },
+    "/mobile/cart": {
+        "get": {
+            "tags": ["Mobile — Cart"],
+            "summary": "List cart lines for the logged-in customer",
+            "security": [{"bearerAuth": []}],
+            "responses": {
+                "200": {"description": "items, itemCount, subtotal"},
+                "501": {"description": "cart_items table missing"},
+            },
+        },
+        "delete": {
+            "tags": ["Mobile — Cart"],
+            "summary": "Clear all cart lines",
+            "security": [{"bearerAuth": []}],
+            "responses": {
+                "200": {"description": "OK"},
+                "501": {"description": "cart_items table missing"},
+            },
+        },
+    },
+    "/mobile/cart/items": {
+        "post": {
+            "tags": ["Mobile — Cart"],
+            "summary": "Add or upsert a cart line (one row per service per user)",
+            "security": [{"bearerAuth": []}],
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["serviceId"],
+                            "properties": {
+                                "serviceId": {"type": "integer"},
+                                "quantity": {"type": "integer"},
+                                "notes": {"type": "string"},
+                                "voiceNoteUrl": {"type": "string"},
+                                "videoUrl": {"type": "string"},
+                                "imageUrl": {"type": "string"},
+                            },
+                        }
+                    }
+                }
+            },
+            "responses": {
+                "200": {"description": "OK"},
+                "400": {"$ref": "#/components/responses/BadRequest"},
+                "501": {"description": "cart_items table missing"},
+            },
+        },
+    },
+    "/mobile/cart/items/{cart_item_id}": {
+        "parameters": [
+            {
+                "name": "cart_item_id",
+                "in": "path",
+                "required": True,
+                "schema": {"type": "integer"},
+            }
+        ],
+        "put": {
+            "tags": ["Mobile — Cart"],
+            "summary": "Update a cart line (quantity and/or notes/media)",
+            "security": [{"bearerAuth": []}],
+            "responses": {
+                "200": {"description": "OK"},
+                "404": {"$ref": "#/components/responses/NotFound"},
+                "501": {"description": "cart_items table missing"},
+            },
+        },
+        "delete": {
+            "tags": ["Mobile — Cart"],
+            "summary": "Remove one cart line",
+            "security": [{"bearerAuth": []}],
+            "responses": {
+                "200": {"description": "OK"},
+                "404": {"$ref": "#/components/responses/NotFound"},
+                "501": {"description": "cart_items table missing"},
+            },
+        },
+    },
     "/mobile/bookings": {
         "get": {
             "tags": ["Mobile — Bookings"],
@@ -131,7 +211,7 @@ MOBILE_PATHS = {
         },
         "post": {
             "tags": ["Mobile — Bookings"],
-            "summary": "Create booking (multi-service + optional media URLs)",
+            "summary": "Create booking (multi-service + optional media URLs). Set fromCart true to use persisted cart lines.",
             "security": [{"bearerAuth": []}],
             "requestBody": {
                 "content": {
@@ -140,7 +220,11 @@ MOBILE_PATHS = {
                     }
                 }
             },
-            "responses": {"201": {"description": "Created"}, "400": {"$ref": "#/components/responses/BadRequest"}},
+            "responses": {
+                "201": {"description": "Created"},
+                "400": {"$ref": "#/components/responses/BadRequest"},
+                "501": {"description": "cart_items table missing when fromCart is true"},
+            },
         },
     },
     "/mobile/bookings/{booking_id}": {
@@ -338,6 +422,7 @@ def main() -> None:
         {"name": "Mobile — Auth"},
         {"name": "Mobile — Home"},
         {"name": "Mobile — Catalog"},
+        {"name": "Mobile — Cart"},
         {"name": "Mobile — Bookings"},
         {"name": "Mobile — Profile"},
         {"name": "Mobile — Addresses"},
@@ -392,6 +477,12 @@ def main() -> None:
         "properties": {
             "serviceAddress": {"type": "string"},
             "address": {"type": "string"},
+            "fromCart": {
+                "type": "boolean",
+                "description": "If true, line items come from POST /mobile/cart/items; serviceId(s) not required",
+            },
+            "useCart": {"type": "boolean", "description": "Alias of fromCart"},
+            "from_cart": {"type": "boolean", "description": "Alias of fromCart"},
             "serviceId": {"type": "integer"},
             "serviceIds": {"type": "array", "items": {"type": "integer"}},
             "description": {"type": "string"},

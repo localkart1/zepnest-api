@@ -229,6 +229,7 @@ def create_app():
         from api.models.customer_address import CustomerAddress
         from api.models.address import Address
         from api.models.audit_log import AuditLog
+        from api.models.cart_item import CartItem
 
         # For Postgres integrations with existing tables, skip create_all by default.
         # You can force-enable with AUTO_CREATE_TABLES=true.
