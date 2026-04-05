@@ -1,5 +1,8 @@
 Flask==3.0.0
 Flask-SQLAlchemy==3.1.1
+# Pin 2.0.36+ — avoids RecursionError in CursorResultMetaData / _merge_cols_by_none with
+# psycopg2 on some Python versions when handling connection init queries.
+SQLAlchemy>=2.0.36,<3.0
 graphene==3.3
 graphql-core==3.2.3
 psycopg2-binary==2.9.11

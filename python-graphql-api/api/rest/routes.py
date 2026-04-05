@@ -15,6 +15,7 @@ from api.address_payload import (
 from api.booking_items_compat import booking_items_pk_column
 from api.booking_status import (
     ASSIGNED_BOOKING_STATUS,
+    BOOKING_STATUS_ESCALATED,
     DEFAULT_BOOKING_STATUS,
     OPEN_BOOKING_STATUSES,
     PIPELINE_BOOKING_STATUSES,
@@ -1372,7 +1373,14 @@ def assign_order(order_id: int):
 @rest_bp.post("/orders/escalate/<int:order_id>")
 def escalate_order(order_id: int):
     d = request.get_json(silent=True) or {}
-    _q("UPDATE bookings SET status='escalated', customer_notes=COALESCE(customer_notes,'') || ' | ESCALATION: ' || :reason, updated_at=NOW() WHERE booking_id=:id", {"id": order_id, "reason": d.get("reason", "Escalated")})
+    _q(
+        "UPDATE bookings SET status=:st, customer_notes=COALESCE(customer_notes,'') || ' | ESCALATION: ' || :reason, updated_at=NOW() WHERE booking_id=:id",
+        {
+            "id": order_id,
+            "reason": d.get("reason", "Escalated"),
+            "st": BOOKING_STATUS_ESCALATED,
+        },
+    )
     db.session.commit()
     return get_order(order_id)
 
@@ -2145,7 +2153,11 @@ def dashboard_stats():
     o = _one("SELECT COUNT(*) AS c FROM bookings")["c"]
     pipe_in = sql_in_text(PIPELINE_BOOKING_STATUSES)
     po = _one(f"SELECT COUNT(*) AS c FROM bookings WHERE status::text IN ({pipe_in})")["c"]
-    esc = _one("SELECT COUNT(*) AS c FROM bookings WHERE status='escalated'")["c"]
+    # Compare via ::text so Postgres does not cast the literal to enum (invalid labels 500).
+    esc = _one(
+        "SELECT COUNT(*) AS c FROM bookings WHERE status::text = :esc",
+        {"esc": BOOKING_STATUS_ESCALATED},
+    )["c"]
     rev = float(_one("SELECT COALESCE(SUM(amount),0) AS c FROM payments WHERE status='completed'")["c"] or 0)
     asub = _one("SELECT COUNT(*) AS c FROM user_subscriptions WHERE status='active'")["c"]
     return jsonify({"totalCustomers": c, "totalTechnicians": t, "activeTechnicians": at, "pendingOrders": po, "totalOrders": o, "totalRevenue": rev, "activeSubscriptions": asub, "totalAssets": 0, "slaCompliancePercent": 0, "pendingEscalations": esc, "recentCustomers": [], "recentTechnicians": [], "recentOrders": [], "customerGrowth": 0, "technicianGrowth": 0, "revenueGrowth": 0})

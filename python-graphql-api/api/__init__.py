@@ -9,6 +9,8 @@ from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from sqlalchemy import event
 
+from api.request_logging import install_request_access_logging
+
 load_dotenv()
 
 db = SQLAlchemy()
@@ -125,6 +127,11 @@ def _install_audit_logging(app: Flask) -> None:
 
         sql = (statement or "").lstrip()
         if not sql:
+            return
+        # Pool / dialect introspection (pg_catalog.version, etc.): never audit — avoids any
+        # interaction with nested connects during first_connect (and is not DML).
+        sql_lower = sql.lower()
+        if "pg_catalog" in sql_lower or "information_schema" in sql_lower:
             return
         first = sql.split(None, 1)[0].upper() if sql.split(None, 1) else ""
         if first not in {"INSERT", "UPDATE", "DELETE"}:
@@ -243,6 +250,8 @@ def create_app():
             db.create_all()
 
         _install_audit_logging(app)
+
+        install_request_access_logging(app)
 
         # Register GraphQL blueprint
         from api.graphql.schema import graphql_bp

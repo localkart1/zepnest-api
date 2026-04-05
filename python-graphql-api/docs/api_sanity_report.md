@@ -2,6 +2,8 @@
 
 See also **`API_STATUS_CODES.md`** (typical codes per area).
 
+Same data as **`GET /health/apis`** or **`GET /?full=1`** on the running server.
+
 Safe probe: **GET only**, rollback after each request. Mutating routes are listed but not called.
 
 ## GET responses
@@ -44,6 +46,7 @@ Safe probe: **GET only**, rollback after each request. Mutating routes are liste
 | GET | `/api/technicians` | 200 | `rest_api.list_technicians` |
 | GET | `/api/technicians/1` | 200 | `rest_api.get_technician` |
 | GET | `/graphql` | 200 | `graphql.graphql_view` |
+| GET | `/health/apis` | 200 | `graphql.health_apis` |
 | GET | `/mobile/addresses` | 401 | `mobile_api.list_addresses` |
 | GET | `/mobile/bookings` | 401 | `mobile_api.list_mobile_bookings` |
 | GET | `/mobile/bookings/1` | 401 | `mobile_api.get_mobile_booking` |

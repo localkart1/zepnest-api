@@ -33,6 +33,11 @@ PIPELINE_BOOKING_STATUSES: tuple[str, ...] = _csv(
 
 ASSIGNED_BOOKING_STATUS = os.getenv("BOOKING_STATUS_ASSIGNED", "assigned")
 
+# Escalation marker on ``bookings.status`` (REST escalate + dashboard count). Must be a label on
+# ``booking_status_enum`` if that column uses the enum — otherwise add it in Postgres, e.g.
+# ``ALTER TYPE booking_status_enum ADD VALUE 'escalated';`` or set this to an existing label.
+BOOKING_STATUS_ESCALATED = os.getenv("BOOKING_STATUS_ESCALATED", "escalated")
+
 
 def sql_in_text(values: tuple[str, ...] | frozenset[str]) -> str:
     """Comma-separated single-quoted literals for ``IN (...)`` (status labels are trusted config)."""

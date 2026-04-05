@@ -1,6 +1,5 @@
 {
   "generated_by": "scripts/api_sanity_probe.py",
-  "probe": "GET-only; db.session.rollback() after each request",
   "get_results": [
     {
       "method": "GET",
@@ -217,6 +216,12 @@
       "path": "/graphql",
       "status": 200,
       "endpoint": "graphql.graphql_view"
+    },
+    {
+      "method": "GET",
+      "path": "/health/apis",
+      "status": 200,
+      "endpoint": "graphql.health_apis"
     },
     {
       "method": "GET",
@@ -526,5 +531,12 @@
       "endpoint": "mobile_api.presign_s3_upload",
       "note": "not probed (mutating / use integration test)"
     }
-  ]
+  ],
+  "summary": {
+    "probe": "GET-only; db.session.rollback() after each request",
+    "get_routes_checked": 45,
+    "get_routes_http_5xx_or_error": 1,
+    "mutating_routes_listed": 43,
+    "healthy": false
+  }
 }
