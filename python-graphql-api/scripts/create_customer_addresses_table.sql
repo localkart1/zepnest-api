@@ -12,6 +12,14 @@ CREATE TABLE IF NOT EXISTS customer_addresses (
     zip_code VARCHAR(20),
     country VARCHAR(80) DEFAULT 'India',
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    door_no VARCHAR(128),
+    building_name VARCHAR(255),
+    street VARCHAR(255),
+    area VARCHAR(255),
+    lat DOUBLE PRECISION,
+    long DOUBLE PRECISION,
+    phone_no VARCHAR(32),
+    name VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

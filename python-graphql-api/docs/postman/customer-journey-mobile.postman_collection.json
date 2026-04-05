@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "cf8f2f5c-0c7f-4d99-9db5-b8778d4f0f01",
     "name": "Customer Journey - Mobile OTP to Booking",
-    "description": "End-to-end customer journey collection for python-graphql-api.\n\nCovers flow:\n1) OTP Generation\n2) OTP Verification\n3) Address Update\n4) Profile Update\n5) Get Categories\n6) Get Subcategories by Category\n7) Attach image/voice/video + notes\n8) Select time slot\n9) Create Booking\n10) View Booking with Booking Items\n\nDB tables touched in this flow:\n- mobile_otp_sessions\n- users\n- addresses (fallback: customer_addresses)\n- bookings\n- booking_items\n\nHow to use:\n- Set collection variables: baseUrl, phone, otp\n- Run requests in order\n- OTP verification requires a valid OTP from SMS/logs (or your local deterministic OTP setup)\n- Bearer token is auto-captured after verify-otp",
+    "description": "End-to-end customer journey collection for python-graphql-api.\n\nCovers flow:\n1) OTP Generation\n2) OTP Verification\n3) Address create (single)\n3b) List addresses (GET)\n3c) Batch create addresses\n3d) Batch update addresses\n4) Profile Update\n5) Get Categories\n6) Get Subcategories by Category\n7) Attach image/voice/video + notes\n8) Select time slot\n9) Create Booking\n10) View Booking with Booking Items\n\nDB tables touched in this flow:\n- mobile_otp_sessions\n- users\n- addresses (fallback: customer_addresses)\n- bookings\n- booking_items\n\nHow to use:\n- Set collection variables: baseUrl, phone, otp\n- Run requests in order\n- OTP verification requires a valid OTP from SMS/logs (or your local deterministic OTP setup)\n- Bearer token is auto-captured after verify-otp",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -81,7 +81,20 @@
       }
     },
     {
-      "name": "3. Address Update (Create)",
+      "name": "3. Address — create one (POST)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var res = pm.response.json();",
+              "if (res && res.id != null) { pm.collectionVariables.set('addressId', String(res.id)); }"
+            ]
+          }
+        }
+      ],
       "request": {
         "method": "POST",
         "header": [
@@ -108,7 +121,139 @@
             "addresses"
           ]
         },
-        "description": "Inserts/updates address in addresses table."
+        "description": "Single-object POST (legacy). Saves `addressId` for batch update step."
+      }
+    },
+    {
+      "name": "3b. List addresses (GET)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var res = pm.response.json();",
+              "pm.expect(res.addresses || res.data).to.be.ok;",
+              "var arr = res.addresses || res.data || [];",
+              "if (arr[0] && arr[0].id != null) { pm.collectionVariables.set('addressId', String(arr[0].id)); }",
+              "if (arr[1] && arr[1].id != null) { pm.collectionVariables.set('addressId2', String(arr[1].id)); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/mobile/addresses",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "addresses"
+          ]
+        },
+        "description": "Returns `{ addresses: [...], data: [...] }` (same list; `data` is legacy)."
+      }
+    },
+    {
+      "name": "3c. Batch create addresses (POST)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var res = pm.response.json();",
+              "if (res.addresses && res.addresses[0] && res.addresses[0].id != null) {",
+              "  pm.collectionVariables.set('addressId', String(res.addresses[0].id));",
+              "}",
+              "if (res.addresses && res.addresses[1] && res.addresses[1].id != null) {",
+              "  pm.collectionVariables.set('addressId2', String(res.addresses[1].id));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"addresses\": [\n    {\n      \"label\": \"Office\",\n      \"line1\": \"100 Batch Road\",\n      \"city\": \"Bengaluru\",\n      \"zipCode\": \"560002\",\n      \"country\": \"India\",\n      \"addressType\": \"work\",\n      \"isDefault\": false\n    },\n    {\n      \"label\": \"Parents\",\n      \"line1\": \"200 Batch Nagar\",\n      \"city\": \"Bengaluru\",\n      \"zipCode\": \"560003\",\n      \"country\": \"India\",\n      \"isDefault\": false\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/addresses",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "addresses"
+          ]
+        },
+        "description": "Body `{ \"addresses\": [ {...}, ... ] }`. Response `{ \"addresses\": [...] }`."
+      }
+    },
+    {
+      "name": "3d. Batch update addresses (PUT)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var res = pm.response.json();",
+              "pm.expect(res.addresses).to.be.an('array');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"addresses\": [\n    {\n      \"id\": \"{{addressId}}\",\n      \"line2\": \"Updated via batch PUT\",\n      \"area\": \"Koramangala\"\n    },\n    {\n      \"id\": \"{{addressId2}}\",\n      \"zipCode\": \"560077\",\n      \"buildingName\": \"Tower 2\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mobile/addresses",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "mobile",
+            "addresses"
+          ]
+        },
+        "description": "PUT `/mobile/addresses` with `{ \"addresses\": [ { \"id\": ..., ... } ] }`. Run 3c first so `addressId` / `addressId2` exist."
       }
     },
     {
@@ -373,6 +518,14 @@
     },
     {
       "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "addressId",
+      "value": ""
+    },
+    {
+      "key": "addressId2",
       "value": ""
     },
     {

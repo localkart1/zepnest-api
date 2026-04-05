@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
 from api import db
+from api.address_payload import address_extra_to_api_dict, normalized_address_extra_columns
 from api.booking_items_compat import booking_items_pk_column
 from api.booking_status import DEFAULT_BOOKING_STATUS
 from api.graphql.catalog_fallback import is_missing_relation_error
@@ -797,26 +798,31 @@ def get_mobile_booking(booking_id: int):
 
 
 def _address_row_to_dict(r) -> dict:
-    return {
-        "id": r["id"],
-        "label": r["label"] or "",
-        "line1": r["line1"] or "",
-        "line2": r["line2"] or "",
-        "city": r["city"] or "",
-        "state": r["state"] or "",
-        "zipCode": r["zip_code"] or "",
-        "country": r["country"] or "",
-        "isDefault": bool(r["is_default"]),
-        "createdAt": r["created_at"].isoformat() if r.get("created_at") else None,
-        "updatedAt": r["updated_at"].isoformat() if r.get("updated_at") else None,
+    rd = dict(r)
+    out = {
+        "id": rd["id"],
+        "label": rd["label"] or "",
+        "line1": rd["line1"] or "",
+        "line2": rd["line2"] or "",
+        "city": rd["city"] or "",
+        "state": rd["state"] or "",
+        "zipCode": rd["zip_code"] or "",
+        "country": rd["country"] or "",
+        "isDefault": bool(rd["is_default"]),
+        "createdAt": rd["created_at"].isoformat() if rd.get("created_at") else None,
+        "updatedAt": rd["updated_at"].isoformat() if rd.get("updated_at") else None,
     }
+    out.update(address_extra_to_api_dict(rd))
+    return out
 
 
 def _list_user_addresses(user_id: int):
     try:
         return _q(
             """
-            SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            SELECT id, label, line1, line2, city, state, zip_code, country, is_default,
+                   door_no, building_name, street, area, lat, long, phone_no, name,
+                   created_at, updated_at
             FROM addresses WHERE user_id = :uid ORDER BY is_default DESC, id DESC
             """,
             {"uid": user_id},
@@ -826,7 +832,9 @@ def _list_user_addresses(user_id: int):
             raise
         return _q(
             """
-            SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            SELECT id, label, line1, line2, city, state, zip_code, country, is_default,
+                   door_no, building_name, street, area, lat, long, phone_no, name,
+                   created_at, updated_at
             FROM customer_addresses WHERE user_id = :uid ORDER BY is_default DESC, id DESC
             """,
             {"uid": user_id},
@@ -976,6 +984,7 @@ def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
     line1 = (addr.get("line1") or addr.get("addressLine1") or "").strip()
     if not line1:
         return
+    extra = normalized_address_extra_columns(addr)
     params = {
         "uid": user_id,
         "label": (addr.get("label") or "Home").strip() or "Home",
@@ -986,6 +995,14 @@ def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
         "zip": (addr.get("zipCode") or addr.get("zip") or "").strip() or None,
         "country": (addr.get("country") or "India").strip() or "India",
         "atype": (addr.get("addressType") or "home").strip() or "home",
+        "door_no": extra["door_no"],
+        "building_name": extra["building_name"],
+        "street": extra["street"],
+        "area": extra["area"],
+        "lat": extra["lat"],
+        "lon": extra["long"],
+        "phone_no": extra["phone_no"],
+        "aname": extra["name"],
     }
     try:
         _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
@@ -1001,7 +1018,9 @@ def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
                 """
                 UPDATE addresses
                 SET label = :label, line1 = :l1, line2 = :l2, city = :city, state = :state,
-                    zip_code = :zip, country = :country, address_type = :atype, is_default = true, updated_at = NOW()
+                    zip_code = :zip, country = :country, address_type = :atype, is_default = true,
+                    door_no = :door_no, building_name = :building_name, street = :street, area = :area,
+                    lat = :lat, long = :lon, phone_no = :phone_no, name = :aname, updated_at = NOW()
                 WHERE id = :id
                 """,
                 {"id": existing["id"], **params},
@@ -1009,8 +1028,10 @@ def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
         else:
             _exec(
                 """
-                INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
-                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, true, NOW(), NOW())
+                INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default,
+                    door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, true,
+                    :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
                 """,
                 params,
             )
@@ -1030,7 +1051,9 @@ def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
                 """
                 UPDATE customer_addresses
                 SET label = :label, line1 = :l1, line2 = :l2, city = :city, state = :state,
-                    zip_code = :zip, country = :country, is_default = true, updated_at = NOW()
+                    zip_code = :zip, country = :country, is_default = true,
+                    door_no = :door_no, building_name = :building_name, street = :street, area = :area,
+                    lat = :lat, long = :lon, phone_no = :phone_no, name = :aname, updated_at = NOW()
                 WHERE id = :id
                 """,
                 {"id": existing["id"], **params},
@@ -1038,8 +1061,10 @@ def _upsert_default_address_for_user(user_id: int, data: dict) -> None:
         else:
             _exec(
                 """
-                INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
-                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, true, NOW(), NOW())
+                INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default,
+                    door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, true,
+                    :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
                 """,
                 params,
             )
@@ -1107,23 +1132,14 @@ def patch_profile():
     return get_profile()
 
 
-@mobile_bp.get("/addresses")
-@require_mobile_auth
-def list_addresses():
-    addrs = _list_user_addresses(g.mobile_user_id)
-    return jsonify({"data": [_address_row_to_dict(dict(a)) for a in addrs]}), 200
-
-
-@mobile_bp.post("/addresses")
-@require_mobile_auth
-def create_address():
-    data = request.get_json(silent=True) or {}
+def _mobile_build_insert_params(user_id: int, data: dict) -> tuple[dict | None, str | None]:
     line1 = (data.get("line1") or data.get("addressLine1") or "").strip()
     if not line1:
-        return jsonify({"message": "line1 is required"}), 400
+        return None, "line1 is required"
     is_def = bool(data.get("isDefault"))
+    extra = normalized_address_extra_columns(data)
     params = {
-        "uid": g.mobile_user_id,
+        "uid": user_id,
         "label": (data.get("label") or "Home").strip() or "Home",
         "l1": line1,
         "l2": (data.get("line2") or data.get("addressLine2") or "").strip() or None,
@@ -1133,15 +1149,35 @@ def create_address():
         "country": (data.get("country") or "India").strip() or "India",
         "atype": (data.get("addressType") or "home").strip() or "home",
         "isd": is_def,
+        "door_no": extra["door_no"],
+        "building_name": extra["building_name"],
+        "street": extra["street"],
+        "area": extra["area"],
+        "lat": extra["lat"],
+        "lon": extra["long"],
+        "phone_no": extra["phone_no"],
+        "aname": extra["name"],
     }
+    return params, None
+
+
+def _mobile_insert_address_row(user_id: int, data: dict) -> tuple[dict | None, str | None]:
+    """Insert one address row; does not commit. Returns (RETURNING row as dict, error message)."""
+    params, err = _mobile_build_insert_params(user_id, data)
+    if err or not params:
+        return None, err or "line1 is required"
+    is_def = params["isd"]
     try:
         if is_def:
-            _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
+            _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
         row = _one(
             """
-            INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
-            VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd, NOW(), NOW())
-            RETURNING id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default,
+                door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+            VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd,
+                :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
+            RETURNING id, label, line1, line2, city, state, zip_code, country, is_default,
+                door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at
             """,
             params,
         )
@@ -1149,27 +1185,30 @@ def create_address():
         if not is_missing_relation_error(e):
             raise
         if is_def:
-            _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": g.mobile_user_id})
+            _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
         row = _one(
             """
-            INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
-            VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
-            RETURNING id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+            INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default,
+                door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+            VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd,
+                :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
+            RETURNING id, label, line1, line2, city, state, zip_code, country, is_default,
+                door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at
             """,
             params,
         )
-    db.session.commit()
-    return jsonify(_address_row_to_dict(dict(row))), 201
+    if not row:
+        return None, "Insert failed"
+    return dict(row), None
 
 
-@mobile_bp.put("/addresses/<int:address_id>")
-@require_mobile_auth
-def update_address(address_id: int):
-    data = request.get_json(silent=True) or {}
+def _mobile_update_address_row(user_id: int, address_id: int, data: dict) -> tuple[dict | None, str | None]:
+    """Update one address; does not commit. Returns (row dict for response, error message)."""
     is_def = data.get("isDefault")
+    ex = normalized_address_extra_columns(data)
     params = {
         "id": address_id,
-        "uid": g.mobile_user_id,
+        "uid": user_id,
         "label": data.get("label"),
         "l1": data.get("line1") or data.get("addressLine1"),
         "l2": data.get("line2") or data.get("addressLine2"),
@@ -1179,14 +1218,22 @@ def update_address(address_id: int):
         "country": data.get("country"),
         "atype": data.get("addressType"),
         "isd": is_def if isinstance(is_def, bool) else None,
+        "door_no": ex["door_no"],
+        "building_name": ex["building_name"],
+        "street": ex["street"],
+        "area": ex["area"],
+        "lat": ex["lat"],
+        "lon": ex["long"],
+        "phone_no": ex["phone_no"],
+        "aname": ex["name"],
     }
     table = "addresses"
     try:
-        owner = _one("SELECT id FROM addresses WHERE id = :id AND user_id = :uid", {"id": address_id, "uid": g.mobile_user_id})
+        owner = _one("SELECT id FROM addresses WHERE id = :id AND user_id = :uid", {"id": address_id, "uid": user_id})
         if not owner:
-            return jsonify({"message": "Address not found"}), 404
+            return None, "Address not found"
         if is_def is True:
-            _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid AND id != :aid", {"uid": g.mobile_user_id, "aid": address_id})
+            _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid AND id != :aid", {"uid": user_id, "aid": address_id})
         _exec(
             """
             UPDATE addresses SET
@@ -1199,6 +1246,14 @@ def update_address(address_id: int):
                 country = COALESCE(:country, country),
                 address_type = COALESCE(:atype, address_type),
                 is_default = COALESCE(:isd, is_default),
+                door_no = COALESCE(:door_no, door_no),
+                building_name = COALESCE(:building_name, building_name),
+                street = COALESCE(:street, street),
+                area = COALESCE(:area, area),
+                lat = COALESCE(:lat, lat),
+                long = COALESCE(:lon, long),
+                phone_no = COALESCE(:phone_no, phone_no),
+                name = COALESCE(:aname, name),
                 updated_at = NOW()
             WHERE id = :id AND user_id = :uid
             """,
@@ -1208,11 +1263,11 @@ def update_address(address_id: int):
         if not is_missing_relation_error(e):
             raise
         table = "customer_addresses"
-        owner = _one("SELECT id FROM customer_addresses WHERE id = :id AND user_id = :uid", {"id": address_id, "uid": g.mobile_user_id})
+        owner = _one("SELECT id FROM customer_addresses WHERE id = :id AND user_id = :uid", {"id": address_id, "uid": user_id})
         if not owner:
-            return jsonify({"message": "Address not found"}), 404
+            return None, "Address not found"
         if is_def is True:
-            _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid AND id != :aid", {"uid": g.mobile_user_id, "aid": address_id})
+            _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid AND id != :aid", {"uid": user_id, "aid": address_id})
         _exec(
             """
             UPDATE customer_addresses SET
@@ -1224,20 +1279,109 @@ def update_address(address_id: int):
                 zip_code = COALESCE(:zip, zip_code),
                 country = COALESCE(:country, country),
                 is_default = COALESCE(:isd, is_default),
+                door_no = COALESCE(:door_no, door_no),
+                building_name = COALESCE(:building_name, building_name),
+                street = COALESCE(:street, street),
+                area = COALESCE(:area, area),
+                lat = COALESCE(:lat, lat),
+                long = COALESCE(:lon, long),
+                phone_no = COALESCE(:phone_no, phone_no),
+                name = COALESCE(:aname, name),
                 updated_at = NOW()
             WHERE id = :id AND user_id = :uid
             """,
             params,
         )
-    db.session.commit()
     row = _one(
         f"""
-        SELECT id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at
+        SELECT id, label, line1, line2, city, state, zip_code, country, is_default,
+            door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at
         FROM {table} WHERE id = :id
         """,
         {"id": address_id},
     )
-    return jsonify(_address_row_to_dict(dict(row))), 200
+    if not row:
+        return None, "Address not found"
+    return dict(row), None
+
+
+@mobile_bp.get("/addresses")
+@require_mobile_auth
+def list_addresses():
+    addrs = _list_user_addresses(g.mobile_user_id)
+    lst = [_address_row_to_dict(dict(a)) for a in addrs]
+    return jsonify({"addresses": lst, "data": lst}), 200
+
+
+@mobile_bp.post("/addresses")
+@require_mobile_auth
+def create_address():
+    data = request.get_json(silent=True) or {}
+    batch = data.get("addresses")
+    if isinstance(batch, list):
+        if not batch:
+            return jsonify({"message": "addresses must be a non-empty array"}), 400
+        out: list[dict] = []
+        for i, item in enumerate(batch):
+            if not isinstance(item, dict):
+                db.session.rollback()
+                return jsonify({"message": "each addresses item must be an object", "index": i}), 400
+            row, err = _mobile_insert_address_row(g.mobile_user_id, item)
+            if err:
+                db.session.rollback()
+                return jsonify({"message": err, "index": i}), 400
+            out.append(_address_row_to_dict(row))
+        db.session.commit()
+        return jsonify({"addresses": out}), 201
+    row, err = _mobile_insert_address_row(g.mobile_user_id, data)
+    if err:
+        return jsonify({"message": err}), 400
+    db.session.commit()
+    return jsonify(_address_row_to_dict(row)), 201
+
+
+@mobile_bp.put("/addresses")
+@require_mobile_auth
+def batch_update_addresses():
+    """Update multiple saved addresses in one request: ``{ \"addresses\": [ { \"id\": 1, ... }, ... ] }``."""
+    data = request.get_json(silent=True) or {}
+    items = data.get("addresses")
+    if not isinstance(items, list) or not items:
+        return jsonify({"message": "addresses must be a non-empty array"}), 400
+    out: list[dict] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            db.session.rollback()
+            return jsonify({"message": "each addresses item must be an object", "index": i}), 400
+        raw_id = item.get("id")
+        if raw_id is None or raw_id is False:
+            db.session.rollback()
+            return jsonify({"message": "id is required on each address", "index": i}), 400
+        try:
+            aid = int(raw_id)
+        except (TypeError, ValueError):
+            db.session.rollback()
+            return jsonify({"message": "id must be an integer", "index": i}), 400
+        row, err = _mobile_update_address_row(g.mobile_user_id, aid, item)
+        if err:
+            db.session.rollback()
+            return jsonify({"message": err, "index": i}), 400
+        out.append(_address_row_to_dict(row))
+    db.session.commit()
+    return jsonify({"addresses": out}), 200
+
+
+@mobile_bp.put("/addresses/<int:address_id>")
+@require_mobile_auth
+def update_address(address_id: int):
+    data = request.get_json(silent=True) or {}
+    row, err = _mobile_update_address_row(g.mobile_user_id, address_id, data)
+    if err:
+        if err == "Address not found":
+            return jsonify({"message": err}), 404
+        return jsonify({"message": err}), 400
+    db.session.commit()
+    return jsonify(_address_row_to_dict(row)), 200
 
 
 @mobile_bp.delete("/addresses/<int:address_id>")

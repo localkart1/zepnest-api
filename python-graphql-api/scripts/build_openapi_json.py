@@ -209,12 +209,14 @@ MOBILE_PATHS = {
         "get": {
             "tags": ["Mobile — Addresses"],
             "summary": "List saved addresses",
+            "description": "Response includes `addresses` (array) and legacy `data` (same array).",
             "security": [{"bearerAuth": []}],
             "responses": {"200": {"description": "OK"}},
         },
         "post": {
             "tags": ["Mobile — Addresses"],
-            "summary": "Create address",
+            "summary": "Create one or more addresses",
+            "description": "Send a single address object, or `{ \"addresses\": [ {...}, ... ] }` to create many at once.",
             "security": [{"bearerAuth": []}],
             "requestBody": {
                 "content": {
@@ -222,6 +224,11 @@ MOBILE_PATHS = {
                         "schema": {
                             "type": "object",
                             "properties": {
+                                "addresses": {
+                                    "type": "array",
+                                    "items": {"type": "object"},
+                                    "description": "When set, batch create; each item is a full address payload (line1 required).",
+                                },
                                 "label": {"type": "string"},
                                 "line1": {"type": "string"},
                                 "line2": {"type": "string"},
@@ -236,7 +243,30 @@ MOBILE_PATHS = {
                     }
                 }
             },
-            "responses": {"201": {"description": "Created"}},
+            "responses": {"201": {"description": "Created (single object or { addresses: [...] })"}},
+        },
+        "put": {
+            "tags": ["Mobile — Addresses"],
+            "summary": "Batch update addresses",
+            "description": "Body `{ \"addresses\": [ { \"id\": <int>, ...fields }, ... ] }`. Each item must include `id`.",
+            "security": [{"bearerAuth": []}],
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["addresses"],
+                            "properties": {
+                                "addresses": {
+                                    "type": "array",
+                                    "items": {"type": "object"},
+                                }
+                            },
+                        }
+                    }
+                }
+            },
+            "responses": {"200": {"description": "OK"}},
         },
     },
     "/mobile/addresses/{address_id}": {

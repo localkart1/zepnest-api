@@ -18,6 +18,7 @@ servers:
 tags:
   - name: Auth
   - name: Customers
+  - name: Addresses
   - name: Technicians
   - name: Assets
   - name: Orders
@@ -220,6 +221,72 @@ paths:
       summary: Delete customer
       responses:
         "204": { description: No content }
+
+  /api/addresses:
+    post:
+      tags: [Addresses]
+      summary: Batch create addresses for a user
+      description: |
+        Inserts multiple address rows for ``users.user_id`` (same numeric id as customer ``id`` in list/get).
+        Requires ``userId`` (or ``user_id``) and a non-empty ``addresses`` array (same item shape as customer create).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressBatchCreateRequest" }
+      responses:
+        "201":
+          description: Created; returns all addresses for that user after insert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AddressBatchCreateResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    put:
+      tags: [Addresses]
+      summary: Batch update address rows
+      description: |
+        Body ``{ "addresses": [ { "id": <int>, ...fields }, ... ] }``. Each object must include ``id``;
+        other fields are optional partial updates (same as ``PUT /api/addresses/{address_id}``).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressBatchUpdateRequest" }
+      responses:
+        "200":
+          description: One acknowledgement object per input row
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AddressBatchUpdateResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Address storage table not available }
+
+  /api/addresses/{address_id}:
+    parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema: { type: integer }
+    put:
+      tags: [Addresses]
+      summary: Update one address row
+      description: |
+        Partial update for a single row in ``addresses`` or ``customer_addresses`` (admin REST).
+        Field names align with ``CustomerCreateAddress`` (camelCase) plus snake_case aliases where supported.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressSingleUpdateBody" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AddressSingleUpdateResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: Address storage table not available }
 
   /api/technicians:
     get:
@@ -873,6 +940,7 @@ components:
 
     CustomerAddress:
       type: object
+      description: Address row as returned on customers and address batch endpoints
       properties:
         id: { type: string }
         label: { type: string }
@@ -883,6 +951,73 @@ components:
         zipCode: { type: string }
         country: { type: string }
         isDefault: { type: boolean }
+        doorNo: { type: string }
+        buildingName: { type: string }
+        street: { type: string }
+        area: { type: string }
+        lat: { type: number, nullable: true }
+        long: { type: number, nullable: true }
+        phoneNo: { type: string }
+        name: { type: string }
+
+    AddressBatchCreateRequest:
+      type: object
+      required: [addresses]
+      properties:
+        userId:
+          type: integer
+          description: users.user_id (customer id from GET /api/customers)
+        user_id:
+          type: integer
+          description: Alias of userId
+        addresses:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CustomerCreateAddress" }
+
+    AddressBatchCreateResponse:
+      type: object
+      properties:
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerAddress" }
+
+    AddressBatchUpdateRequest:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          minItems: 1
+          description: Each item must include id; other keys are partial updates
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { oneOf: [{ type: integer }, { type: string }] }
+            additionalProperties: true
+
+    AddressBatchUpdateResponse:
+      type: object
+      properties:
+        addresses:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              message: { type: string }
+
+    AddressSingleUpdateBody:
+      type: object
+      additionalProperties: true
+      description: Optional subset of address fields (see CustomerCreateAddress / PUT handler)
+
+    AddressSingleUpdateResponse:
+      type: object
+      properties:
+        id: { type: string }
+        message: { type: string }
 
     CustomerDetail:
       type: object
@@ -911,17 +1046,22 @@ components:
       description: Admin-style address; line1/addressLine1 or doorNo+street+landmark.
       properties:
         id: { type: string }
-        fullName: { type: string }
+        fullName: { type: string, description: Contact name; stored as `name` on the address row }
+        name: { type: string, description: Alias of fullName for the contact/recipient name }
         nickName: { type: string }
-        phone: { type: string }
+        phone: { type: string, description: Legacy; also maps to `phone_no` when provided }
+        phoneNo: { type: string }
         doorNo: { type: string }
+        buildingName: { type: string }
         street: { type: string }
+        area: { type: string }
         landmark: { type: string }
         zipCode: { type: string }
         state: { type: string }
         city: { type: string }
-        lat: { type: string }
-        lng: { type: string }
+        lat: { type: number, nullable: true }
+        lng: { type: number, nullable: true }
+        long: { type: number, nullable: true, description: Longitude; alias of lng }
         isPrimary: { type: boolean }
         isDefault: { type: boolean }
         line1: { type: string }

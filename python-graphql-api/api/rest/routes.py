@@ -7,6 +7,11 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.exc import IntegrityError
 
 from api import db
+from api.address_payload import (
+    address_extra_to_api_dict,
+    apply_address_extra_fields_to_update,
+    normalized_address_extra_columns,
+)
 from api.booking_items_compat import booking_items_pk_column
 from api.booking_status import (
     ASSIGNED_BOOKING_STATUS,
@@ -46,7 +51,8 @@ def _addresses_by_user_ids(user_ids: list[int]) -> dict[int, list[dict]]:
     try:
         rows = _q(
             f"""
-            SELECT user_id, id, label, line1, line2, city, state, zip_code, country, is_default
+            SELECT user_id, id, label, line1, line2, city, state, zip_code, country, is_default,
+                   door_no, building_name, street, area, lat, long, phone_no, name
             FROM addresses
             WHERE user_id IN ({placeholders})
             ORDER BY is_default DESC, id DESC
@@ -58,7 +64,8 @@ def _addresses_by_user_ids(user_ids: list[int]) -> dict[int, list[dict]]:
             raise
         rows = _q(
             f"""
-            SELECT user_id, id, label, line1, line2, city, state, zip_code, country, is_default
+            SELECT user_id, id, label, line1, line2, city, state, zip_code, country, is_default,
+                   door_no, building_name, street, area, lat, long, phone_no, name
             FROM customer_addresses
             WHERE user_id IN ({placeholders})
             ORDER BY is_default DESC, id DESC
@@ -68,19 +75,20 @@ def _addresses_by_user_ids(user_ids: list[int]) -> dict[int, list[dict]]:
     out: dict[int, list[dict]] = {}
     for r in rows:
         uid = int(r["user_id"])
-        out.setdefault(uid, []).append(
-            {
-                "id": str(r["id"]),
-                "label": r["label"] or "",
-                "line1": r["line1"] or "",
-                "line2": r["line2"] or "",
-                "city": r["city"] or "",
-                "state": r["state"] or "",
-                "zipCode": r["zip_code"] or "",
-                "country": r["country"] or "",
-                "isDefault": bool(r["is_default"]),
-            }
-        )
+        row_d = dict(r)
+        item = {
+            "id": str(r["id"]),
+            "label": r["label"] or "",
+            "line1": r["line1"] or "",
+            "line2": r["line2"] or "",
+            "city": r["city"] or "",
+            "state": r["state"] or "",
+            "zipCode": r["zip_code"] or "",
+            "country": r["country"] or "",
+            "isDefault": bool(r["is_default"]),
+        }
+        item.update(address_extra_to_api_dict(row_d))
+        out.setdefault(uid, []).append(item)
     return out
 
 
@@ -151,6 +159,7 @@ def _insert_addresses_for_customer(user_id: int, addresses) -> None:
         aphone = (addr.get("phone") or "").strip()
         if aphone and not l2:
             l2 = aphone
+        extra = normalized_address_extra_columns(addr)
         rows.append(
             {
                 "label": label[:64],
@@ -162,6 +171,14 @@ def _insert_addresses_for_customer(user_id: int, addresses) -> None:
                 "country": country[:80] if country else "India",
                 "atype": atype[:32] if atype else "home",
                 "isd": isd,
+                "door_no": extra["door_no"],
+                "building_name": extra["building_name"],
+                "street": extra["street"],
+                "area": extra["area"],
+                "lat": extra["lat"],
+                "lon": extra["long"],
+                "phone_no": extra["phone_no"],
+                "aname": extra["name"],
             }
         )
     if not rows:
@@ -180,14 +197,24 @@ def _insert_addresses_for_customer(user_id: int, addresses) -> None:
             "country": r["country"],
             "atype": r["atype"],
             "isd": r["isd"],
+            "door_no": r["door_no"],
+            "building_name": r["building_name"],
+            "street": r["street"],
+            "area": r["area"],
+            "lat": r["lat"],
+            "lon": r["lon"],
+            "phone_no": r["phone_no"],
+            "aname": r["aname"],
         }
         try:
             if r["isd"]:
                 _exec("UPDATE addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
             _exec(
                 """
-                INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
-                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd, NOW(), NOW())
+                INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default,
+                    door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd,
+                    :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
                 """,
                 params_addr,
             )
@@ -204,13 +231,23 @@ def _insert_addresses_for_customer(user_id: int, addresses) -> None:
                 "zip": r["zip_c"],
                 "country": r["country"],
                 "isd": r["isd"],
+                "door_no": r["door_no"],
+                "building_name": r["building_name"],
+                "street": r["street"],
+                "area": r["area"],
+                "lat": r["lat"],
+                "lon": r["lon"],
+                "phone_no": r["phone_no"],
+                "aname": r["aname"],
             }
             if r["isd"]:
                 _exec("UPDATE customer_addresses SET is_default = false WHERE user_id = :uid", {"uid": user_id})
             _exec(
                 """
-                INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
-                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
+                INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default,
+                    door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+                VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd,
+                    :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
                 """,
                 ca_params,
             )
@@ -281,6 +318,7 @@ def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
         country = ((addr.get("country") or "India").strip() or "India")[:80]
         atype = ((addr.get("addressType") or "home").strip() or "home")[:32]
         isd = bool(addr.get("isPrimary", addr.get("isDefault", False)))
+        extra = normalized_address_extra_columns(addr)
         params_u = {
             "id": aid,
             "uid": user_id,
@@ -293,6 +331,14 @@ def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
             "country": country,
             "atype": atype,
             "isd": isd,
+            "door_no": extra["door_no"],
+            "building_name": extra["building_name"],
+            "street": extra["street"],
+            "area": extra["area"],
+            "lat": extra["lat"],
+            "lon": extra["long"],
+            "phone_no": extra["phone_no"],
+            "aname": extra["name"],
         }
         if existing:
             if isd:
@@ -301,7 +347,9 @@ def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
                 _exec(
                     """
                     UPDATE addresses SET label=:label, line1=:l1, line2=:l2, city=:city, state=:state,
-                        zip_code=:zip, country=:country, address_type=:atype, is_default=:isd, updated_at = NOW()
+                        zip_code=:zip, country=:country, address_type=:atype, is_default=:isd,
+                        door_no=:door_no, building_name=:building_name, street=:street, area=:area,
+                        lat=:lat, long=:lon, phone_no=:phone_no, name=:aname, updated_at = NOW()
                     WHERE id=:id AND user_id=:uid
                     """,
                     params_u,
@@ -310,10 +358,34 @@ def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
                 _exec(
                     """
                     UPDATE customer_addresses SET label=:label, line1=:l1, line2=:l2, city=:city, state=:state,
-                        zip_code=:zip, country=:country, is_default=:isd, updated_at = NOW()
+                        zip_code=:zip, country=:country, is_default=:isd,
+                        door_no=:door_no, building_name=:building_name, street=:street, area=:area,
+                        lat=:lat, long=:lon, phone_no=:phone_no, name=:aname, updated_at = NOW()
                     WHERE id=:id AND user_id=:uid
                     """,
-                    {k: params_u[k] for k in ("id", "uid", "label", "l1", "l2", "city", "state", "zip", "country", "isd")},
+                    {
+                        k: params_u[k]
+                        for k in (
+                            "id",
+                            "uid",
+                            "label",
+                            "l1",
+                            "l2",
+                            "city",
+                            "state",
+                            "zip",
+                            "country",
+                            "isd",
+                            "door_no",
+                            "building_name",
+                            "street",
+                            "area",
+                            "lat",
+                            "lon",
+                            "phone_no",
+                            "aname",
+                        )
+                    },
                 )
             keep_ids.append(int(aid))
         else:
@@ -330,12 +402,22 @@ def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
                 "country": country,
                 "atype": atype,
                 "isd": isd,
+                "door_no": extra["door_no"],
+                "building_name": extra["building_name"],
+                "street": extra["street"],
+                "area": extra["area"],
+                "lat": extra["lat"],
+                "lon": extra["long"],
+                "phone_no": extra["phone_no"],
+                "aname": extra["name"],
             }
             if tbl == "addresses":
                 row = _one(
                     """
-                    INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default, created_at, updated_at)
-                    VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd, NOW(), NOW())
+                    INSERT INTO addresses (user_id, label, line1, line2, city, state, zip_code, country, address_type, is_default,
+                        door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+                    VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :atype, :isd,
+                        :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
                     RETURNING id
                     """,
                     ins_params,
@@ -343,11 +425,34 @@ def _sync_addresses_for_customer(user_id: int, addresses: list) -> None:
             else:
                 row = _one(
                     """
-                    INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default, created_at, updated_at)
-                    VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd, NOW(), NOW())
+                    INSERT INTO customer_addresses (user_id, label, line1, line2, city, state, zip_code, country, is_default,
+                        door_no, building_name, street, area, lat, long, phone_no, name, created_at, updated_at)
+                    VALUES (:uid, :label, :l1, :l2, :city, :state, :zip, :country, :isd,
+                        :door_no, :building_name, :street, :area, :lat, :lon, :phone_no, :aname, NOW(), NOW())
                     RETURNING id
                     """,
-                    {k: ins_params[k] for k in ("uid", "label", "l1", "l2", "city", "state", "zip", "country", "isd")},
+                    {
+                        k: ins_params[k]
+                        for k in (
+                            "uid",
+                            "label",
+                            "l1",
+                            "l2",
+                            "city",
+                            "state",
+                            "zip",
+                            "country",
+                            "isd",
+                            "door_no",
+                            "building_name",
+                            "street",
+                            "area",
+                            "lat",
+                            "lon",
+                            "phone_no",
+                            "aname",
+                        )
+                    },
                 )
             if row:
                 keep_ids.append(int(row["id"]))
@@ -1623,10 +1728,11 @@ def catalog_subcategories():
     )
 
 
-@rest_bp.put("/addresses/<int:address_id>")
-def update_address_row(address_id: int):
-    """Update a single row in ``addresses`` or ``customer_addresses`` (all writable columns)."""
-    d = request.get_json(silent=True) or {}
+def _rest_update_address_row_core(address_id: int, d: dict) -> tuple[dict | None, tuple | None]:
+    """
+    Apply admin REST address update without committing.
+    Returns (payload_dict, None) on success, (None, (jsonify(...), status_code)) on error.
+    """
     tbl: str | None = None
     row = None
     try:
@@ -1642,11 +1748,11 @@ def update_address_row(address_id: int):
         except ProgrammingError as e:
             if not is_missing_relation_error(e):
                 raise
-            return jsonify({"message": "Address storage table not available"}), 501
+            return None, (jsonify({"message": "Address storage table not available"}), 501)
         if row:
             tbl = "customer_addresses"
     if not tbl or not row:
-        return jsonify({"message": "Address not found"}), 404
+        return None, (jsonify({"message": "Address not found"}), 404)
 
     uid = int(row["user_id"])
     sets: list[str] = []
@@ -1686,20 +1792,84 @@ def update_address_row(address_id: int):
         sets.append("is_default = :aisd")
         params["aisd"] = isd
 
+    apply_address_extra_fields_to_update(d, sets, params)
+
     if not sets:
-        return jsonify({"message": "No updatable fields in body"}), 400
+        return None, (jsonify({"message": "No updatable fields in body"}), 400)
     if "al1" in params and (params["al1"] is None or str(params["al1"]).strip() == ""):
-        return jsonify({"message": "line1 cannot be empty"}), 400
+        return None, (jsonify({"message": "line1 cannot be empty"}), 400)
 
     sets.append("updated_at = NOW()")
     try:
         _exec(f"UPDATE {tbl} SET {', '.join(sets)} WHERE id = :id", params)
     except ProgrammingError as e:
         if is_missing_relation_error(e):
-            return jsonify({"message": "Address storage table not available"}), 501
+            return None, (jsonify({"message": "Address storage table not available"}), 501)
         raise
+    return {"id": str(address_id), "message": "Address updated"}, None
+
+
+@rest_bp.post("/addresses")
+def batch_create_address_rows():
+    """Batch create: ``{ \"userId\": <int>, \"addresses\": [ {...}, ... ] }`` (admin REST)."""
+    body = request.get_json(silent=True) or {}
+    raw_uid = body.get("userId") or body.get("user_id")
+    addrs = body.get("addresses")
+    if raw_uid is None or not isinstance(addrs, list) or not addrs:
+        return jsonify({"message": "userId and a non-empty addresses array are required"}), 400
+    try:
+        uid = int(raw_uid)
+    except (TypeError, ValueError):
+        return jsonify({"message": "userId must be an integer"}), 400
+    _insert_addresses_for_customer(uid, addrs)
     db.session.commit()
-    return jsonify({"id": str(address_id), "message": "Address updated"})
+    rows = _addresses_by_user_ids([uid]).get(uid, [])
+    return jsonify({"addresses": rows}), 201
+
+
+@rest_bp.put("/addresses")
+def batch_update_address_rows():
+    """Batch update: ``{ \"addresses\": [ { \"id\": 1, ...fields }, ... ] }`` (admin REST)."""
+    body = request.get_json(silent=True) or {}
+    items = body.get("addresses")
+    if not isinstance(items, list) or not items:
+        return jsonify({"message": "addresses must be a non-empty array"}), 400
+    out: list[dict] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            db.session.rollback()
+            return jsonify({"message": "each addresses item must be an object", "index": i}), 400
+        raw_id = item.get("id")
+        if raw_id is None or raw_id is False:
+            db.session.rollback()
+            return jsonify({"message": "id is required on each address", "index": i}), 400
+        try:
+            aid = int(raw_id)
+        except (TypeError, ValueError):
+            db.session.rollback()
+            return jsonify({"message": "id must be an integer", "index": i}), 400
+        patch = {k: v for k, v in item.items() if k != "id"}
+        payload, err = _rest_update_address_row_core(aid, patch)
+        if err:
+            db.session.rollback()
+            resp, code = err
+            return resp, code
+        assert payload is not None
+        out.append(payload)
+    db.session.commit()
+    return jsonify({"addresses": out}), 200
+
+
+@rest_bp.put("/addresses/<int:address_id>")
+def update_address_row(address_id: int):
+    """Update a single row in ``addresses`` or ``customer_addresses`` (all writable columns)."""
+    d = request.get_json(silent=True) or {}
+    payload, err = _rest_update_address_row_core(address_id, d)
+    if err:
+        resp, code = err
+        return resp, code
+    db.session.commit()
+    return jsonify(payload)
 
 
 @rest_bp.put("/catalog/categories/<int:category_id>")

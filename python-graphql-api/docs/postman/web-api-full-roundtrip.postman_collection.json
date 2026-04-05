@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a3e7b2c1-9f4d-4a1e-b2c3-d4e5f6789012",
     "name": "Web API — Full roundtrip (auth + REST)",
-    "description": "python-graphql-api web flow for admin-style REST.\n\n**Run with Collection Runner in order** (top to bottom).\n\n**Variables** (collection → Variables):\n- `baseUrl` — e.g. `http://localhost:5002`\n- `registerEmail`, `registerPassword` — web auth (min 8 chars)\n\n**Auto-set by tests:** `accessToken`, `customerId`, `addressId`, `orderId`, `technicianId`\n\n**Notes:**\n- Register may return **409** if the email exists; run **Login** anyway.\n- **Deletes:** order **12** before customer **13** (FK on `bookings.customer_id`).\n- Ensure `users.internal_notes` exists if create/update customer uses notes (`scripts/add_users_internal_notes.sql`).\n- If `POST /api/technicians` fails with duplicate `technician_id`, fix the Postgres sequence on `technician_profiles`.\n- REST routes are open in code; Bearer is sent for parity with a secured gateway.\n",
+    "description": "python-graphql-api web flow for admin-style REST.\n\n**Run with Collection Runner in order** (top to bottom).\n\n**Variables** (collection → Variables):\n- `baseUrl` — e.g. `http://localhost:5002`\n- `registerEmail`, `registerPassword` — web auth (min 8 chars)\n\n**Auto-set by tests:** `accessToken`, `customerId`, `addressId`, `addressId2`, `orderId`, `technicianId`\n\n**Addresses:** Steps **6A–6C** cover `POST/PUT /api/addresses` batch APIs and single-row `PUT /api/addresses/{id}`.\n\n**Notes:**\n- Register may return **409** if the email exists; run **Login** anyway.\n- **Deletes:** order **12** before customer **13** (FK on `bookings.customer_id`).\n- Ensure `users.internal_notes` exists if create/update customer uses notes (`scripts/add_users_internal_notes.sql`).\n- If `POST /api/technicians` fails with duplicate `technician_id`, fix the Postgres sequence on `technician_profiles`.\n- REST routes are open in code; Bearer is sent for parity with a secured gateway.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -12,6 +12,7 @@
     { "key": "accessToken", "value": "" },
     { "key": "customerId", "value": "" },
     { "key": "addressId", "value": "" },
+    { "key": "addressId2", "value": "" },
     { "key": "orderId", "value": "" },
     { "key": "technicianId", "value": "" }
   ],
@@ -175,6 +176,96 @@
         },
         "url": "{{baseUrl}}/api/customers",
         "description": "POST /api/customers — saves `customerId` and `addressId` for later requests."
+      }
+    },
+    {
+      "name": "6A. Batch create addresses (POST /api/addresses)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "var j = pm.response.json();",
+              "if (j.addresses && j.addresses.length > 0 && j.addresses[0].id) {",
+              "  pm.collectionVariables.set('addressId', String(j.addresses[0].id));",
+              "}",
+              "if (j.addresses && j.addresses.length > 1 && j.addresses[1].id) {",
+              "  pm.collectionVariables.set('addressId2', String(j.addresses[1].id));",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": {{customerId}},\n  \"addresses\": [\n    {\n      \"line1\": \"Batch Street One\",\n      \"city\": \"Chennai\",\n      \"zipCode\": \"600003\",\n      \"buildingName\": \"Block A\",\n      \"isPrimary\": true\n    },\n    {\n      \"line1\": \"Batch Street Two\",\n      \"city\": \"Chennai\",\n      \"zipCode\": \"600004\",\n      \"isPrimary\": false\n    }\n  ]\n}"
+        },
+        "url": "{{baseUrl}}/api/addresses",
+        "description": "POST /api/addresses — batch create; refreshes `addressId` / `addressId2` from response."
+      }
+    },
+    {
+      "name": "6B. Batch update addresses (PUT /api/addresses)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "var j = pm.response.json();",
+              "pm.expect(j.addresses).to.be.an('array');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"addresses\": [\n    {\n      \"id\": {{addressId}},\n      \"zipCode\": \"600099\",\n      \"buildingName\": \"Updated Block\"\n    },\n    {\n      \"id\": {{addressId2}},\n      \"city\": \"Chennai\",\n      \"area\": \"Velachery\"\n    }\n  ]\n}"
+        },
+        "url": "{{baseUrl}}/api/addresses",
+        "description": "PUT /api/addresses — each item must include `id` (use 6A variables; run 6 before 6A)."
+      }
+    },
+    {
+      "name": "6C. Update one address (PUT /api/addresses/:id)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"zipCode\": \"600100\",\n  \"phoneNo\": \"9800000001\"\n}"
+        },
+        "url": "{{baseUrl}}/api/addresses/{{addressId}}",
+        "description": "PUT /api/addresses/{address_id} — single-row partial update (admin REST)."
       }
     },
     {

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-End-to-end web API roundtrip: auth + REST CRUD for technicians, customers, orders.
+End-to-end web API roundtrip: auth + REST CRUD for technicians, customers, orders, addresses.
+
+Includes address REST: POST/PUT /api/addresses (batch), GET /api/customers/{id} (read addresses),
+PUT /api/addresses/{id} (single).
 
 Uses Flask's test client and your real DATABASE_URL (from .env). Run from repo root:
 
@@ -152,6 +155,88 @@ def main() -> int:
             if customer_id is None:
                 print(json.dumps({"errors": errors}, indent=2))
                 return 1
+
+            # 6a–6d Address REST: batch create, read (GET customer), batch update, single update
+            r = _req(
+                c,
+                "post",
+                "/api/addresses",
+                json_body={
+                    "userId": customer_id,
+                    "addresses": [
+                        {
+                            "line1": "Roundtrip Batch A",
+                            "city": "Chennai",
+                            "zipCode": "600010",
+                            "isPrimary": True,
+                        },
+                        {
+                            "line1": "Roundtrip Batch B",
+                            "city": "Chennai",
+                            "zipCode": "600011",
+                            "isPrimary": False,
+                        },
+                    ],
+                },
+                headers=auth,
+            )
+            _ok(
+                r.status_code == 201,
+                f"6a POST /api/addresses: {r.status_code} {r.get_data(as_text=True)[:500]}",
+                errors,
+            )
+
+            r = _req(c, "get", f"/api/customers/{customer_id}", headers=auth)
+            _ok(
+                r.status_code == 200,
+                f"6b GET /api/customers/{{id}} (read addresses): {r.status_code}",
+                errors,
+            )
+            addr_list = (r.get_json() or {}).get("addresses") if r.status_code == 200 else []
+            _ok(
+                len(addr_list) >= 3,
+                f"6b expected >=3 addresses (1 from step 6 + 2 from batch), got {len(addr_list)}",
+                errors,
+            )
+            addr_ids: list[int] = []
+            for a in addr_list:
+                if a.get("id") is not None:
+                    try:
+                        addr_ids.append(int(str(a["id"])))
+                    except (TypeError, ValueError):
+                        pass
+            _ok(len(addr_ids) >= 2, f"6b need >=2 address ids for batch update, got {len(addr_ids)}", errors)
+
+            r = _req(
+                c,
+                "put",
+                "/api/addresses",
+                json_body={
+                    "addresses": [
+                        {"id": addr_ids[0], "zipCode": "600099"},
+                        {"id": addr_ids[1], "city": "Chennai"},
+                    ]
+                },
+                headers=auth,
+            )
+            _ok(
+                r.status_code == 200,
+                f"6c PUT /api/addresses (batch): {r.status_code} {r.get_data(as_text=True)[:500]}",
+                errors,
+            )
+
+            r = _req(
+                c,
+                "put",
+                f"/api/addresses/{addr_ids[0]}",
+                json_body={"zipCode": "600100", "phoneNo": "9800000000"},
+                headers=auth,
+            )
+            _ok(
+                r.status_code == 200,
+                f"6d PUT /api/addresses/{{id}}: {r.status_code} {r.get_data(as_text=True)[:500]}",
+                errors,
+            )
 
             # 7 Create order (no bookingItems — avoids services catalog dependency)
             r = _req(
@@ -305,7 +390,10 @@ def main() -> int:
         for e in errors:
             print(" -", e)
         return 1
-    print("OK — web API roundtrip (register/login, lists, CRUD customer/order/technician) passed.")
+    print(
+        "OK — web API roundtrip (register/login, lists, CRUD customer/order/technician, "
+        "address batch + read + single update) passed."
+    )
     return 0
 
 
