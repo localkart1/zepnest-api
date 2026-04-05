@@ -507,9 +507,52 @@ def graphql_view():
 
     return jsonify(response)
 
-@graphql_bp.route('/', methods=['GET'])
+def _health_full_payload():
+    """Run GET-only probe over all registered routes (see ``api/health_probe.py``)."""
+    from flask import current_app
+
+    from api.health_probe import run_get_api_probe
+
+    app = current_app._get_current_object()
+    probe = run_get_api_probe(app)
+    issues = [
+        {"path": x["path"], "status": x.get("status"), "endpoint": x.get("endpoint"), "error": x.get("error")}
+        for x in probe["get_results"]
+        if (x.get("status") is not None and x["status"] >= 500) or x.get("error")
+    ]
+    out = {
+        "status": "ok" if probe["summary"]["healthy"] else "degraded",
+        "message": "API is running; GET probe complete"
+        if probe["summary"]["healthy"]
+        else "API is running; one or more GET routes returned 5xx or raised",
+        "probe": probe["summary"]["probe"],
+        "summary": probe["summary"],
+        "issues": issues,
+        "get_results": probe["get_results"],
+        "mutating_routes_not_probed": probe["mutating_routes_not_probed"],
+    }
+    return out
+
+
+@graphql_bp.route("/health/apis", methods=["GET"])
+def health_apis():
+    """Full GET-only check of every registered route. Does not mutate data."""
+    return jsonify(_health_full_payload())
+
+
+@graphql_bp.route("/", methods=["GET"])
 def health_check():
-    return jsonify({'status': 'ok', 'message': 'API is running'})
+    """
+    Liveness: ``GET /`` → quick JSON (for load balancers).
+
+    Full API check: ``GET /?full=1`` or ``GET /?apis=1`` (same payload as ``GET /health/apis``).
+    """
+    from flask import request
+
+    q = (request.args.get("full") or request.args.get("apis") or "").strip().lower()
+    if q in ("1", "true", "yes", "all"):
+        return jsonify(_health_full_payload())
+    return jsonify({"status": "ok", "message": "API is running"})
 
 def graphiql_interface():
     """Return GraphiQL HTML interface"""

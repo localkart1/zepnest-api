@@ -2,25 +2,58 @@
   "info": {
     "_postman_id": "b4f8c3d2-0a5e-4b2f-d3e4-f5a6b7890123",
     "name": "Mobile API — Full roundtrip (OTP → cart → booking)",
-    "description": "End-to-end **/mobile** flow for python-graphql-api.\n\n**Run Collection Runner in order** (top to bottom).\n\n**Variables** (collection → Variables):\n- `baseUrl` — e.g. `http://localhost:5002`\n- `mobilePhone` — 10-digit Indian mobile (e.g. `9876543210`)\n- `otp` — optional; auto-filled from `debugOtp` when `MOBILE_OTP_DEBUG=true` on request-otp\n\n**Auto-set by tests:** `otp`, `mobileAccessToken`, `userId`, `addressId`, `addressId2`, `categoryId`, `serviceId1`, `serviceId2`, `bookingId`\n\n**Notes:**\n- **Verify OTP** sends `firstName` / `lastName` (profile bootstrap).\n- **Subcategories** need a **numeric** `categoryId` (from `categories` table). If `/mobile/home` uses legacy string category ids, step 8 may return **400** — set `categoryId` manually in variables or ignore that step.\n- **Cart** needs at least one active service in DB; placeholder media URLs must be **HTTPS** if your app validates.\n- **cart_items** table must exist (`scripts/create_cart_items_table.sql` + alter if needed).\n- Clear cart before re-running booking steps or use a fresh user.\n",
+    "description": "End-to-end **/mobile** flow for python-graphql-api.\n\n**Run Collection Runner in order** (top to bottom).\n\n**Variables** (collection → Variables):\n- `baseUrl` — e.g. `http://localhost:5002`\n- `mobilePhone` — 10-digit Indian mobile (e.g. `9876543210`)\n- `otp` — optional; auto-filled from `debugOtp` when `MOBILE_OTP_DEBUG=true` on request-otp\n\n**Auto-set by tests:** `otp`, `mobileAccessToken`, `userId`, `addressId`, `addressId2`, `categoryId`, `serviceId1`, `serviceId2`, `bookingId`\n\n**Notes:**\n- **Verify OTP** sends `firstName` / `lastName` (profile bootstrap).\n- **Subcategories** need a **numeric** `categoryId` (from `categories` table). If `/mobile/home` uses legacy string category ids, step 8 may return **400** — set `categoryId` manually in variables or ignore that step.\n- **Cart** needs at least one active service in DB; placeholder media URLs must be **HTTPS** if your app validates.\n- **cart_items** table must exist (`scripts/create_cart_items_table.sql` + alter if needed).\n- Clear cart before re-running booking steps or use a fresh user.\n\n\n**Status codes:** See `docs/API_STATUS_CODES.md` and GET probe output `docs/api_sanity_report.md`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:5002" },
-    { "key": "mobilePhone", "value": "9876543210" },
-    { "key": "otp", "value": "" },
-    { "key": "mobileAccessToken", "value": "" },
-    { "key": "userId", "value": "" },
-    { "key": "addressId", "value": "" },
-    { "key": "addressId2", "value": "" },
-    { "key": "categoryId", "value": "" },
-    { "key": "serviceId1", "value": "" },
-    { "key": "serviceId2", "value": "" },
-    { "key": "bookingId", "value": "" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5002"
+    },
+    {
+      "key": "mobilePhone",
+      "value": "9876543210"
+    },
+    {
+      "key": "otp",
+      "value": ""
+    },
+    {
+      "key": "mobileAccessToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "addressId",
+      "value": ""
+    },
+    {
+      "key": "addressId2",
+      "value": ""
+    },
+    {
+      "key": "categoryId",
+      "value": ""
+    },
+    {
+      "key": "serviceId1",
+      "value": ""
+    },
+    {
+      "key": "serviceId2",
+      "value": ""
+    },
+    {
+      "key": "bookingId",
+      "value": ""
+    }
   ],
   "item": [
     {
-      "name": "1. Request OTP",
+      "name": "1. Request OTP [200]",
       "event": [
         {
           "listen": "test",
@@ -39,17 +72,22 @@
       ],
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"phone\": \"{{mobilePhone}}\"\n}"
         },
         "url": "{{baseUrl}}/mobile/auth/request-otp",
-        "description": "POST /mobile/auth/request-otp — sets `otp` from `debugOtp` when MOBILE_OTP_DEBUG is enabled; otherwise paste SMS OTP into collection variable `otp`."
+        "description": "POST /mobile/auth/request-otp — sets `otp` from `debugOtp` when MOBILE_OTP_DEBUG is enabled; otherwise paste SMS OTP into collection variable `otp`.\n\n**HTTP:** `200` success; `400` invalid phone; `502` SMS failure."
       }
     },
     {
-      "name": "2. Verify OTP (creates customer + JWT)",
+      "name": "2. Verify OTP [200]",
       "event": [
         {
           "listen": "test",
@@ -67,17 +105,22 @@
       ],
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"phone\": \"{{mobilePhone}}\",\n  \"otp\": \"{{otp}}\",\n  \"firstName\": \"Mobile\",\n  \"lastName\": \"Tester\"\n}"
         },
         "url": "{{baseUrl}}/mobile/auth/verify-otp",
-        "description": "POST /mobile/auth/verify-otp — profile bootstrap via firstName/lastName; returns Bearer token."
+        "description": "POST /mobile/auth/verify-otp — profile bootstrap via firstName/lastName; returns Bearer token.\n\n**HTTP:** `200` JWT issued; `400` missing fields / OTP issue; `401` wrong OTP."
       }
     },
     {
-      "name": "3. Get profile",
+      "name": "3. Get profile [200]",
       "event": [
         {
           "listen": "test",
@@ -94,14 +137,17 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/profile",
-        "description": "GET /mobile/profile — user + addresses after registration."
+        "description": "GET /mobile/profile — user + addresses after registration.\n\n**HTTP:** `GET` `200`; `401`; `404`."
       }
     },
     {
-      "name": "4. Patch profile",
+      "name": "4. Patch profile [200]",
       "event": [
         {
           "listen": "test",
@@ -118,19 +164,25 @@
       "request": {
         "method": "PATCH",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"firstName\": \"Mobile\",\n  \"lastName\": \"Tester\",\n  \"email\": \"mobile.tester@example.test\"\n}"
         },
         "url": "{{baseUrl}}/mobile/profile",
-        "description": "PATCH /mobile/profile — update name/email; optional nested `address` upserts default (not used here)."
+        "description": "PATCH /mobile/profile — update name/email; optional nested `address` upserts default (not used here).\n\n**HTTP:** `PATCH` `200`; `401`."
       }
     },
     {
-      "name": "5. Add address",
+      "name": "5. Add address [201]",
       "event": [
         {
           "listen": "test",
@@ -148,19 +200,25 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"label\": \"Home\",\n  \"line1\": \"100 Test Street\",\n  \"line2\": \"Near Park\",\n  \"city\": \"Bengaluru\",\n  \"state\": \"KA\",\n  \"zipCode\": \"560001\",\n  \"country\": \"India\",\n  \"isDefault\": true\n}"
         },
         "url": "{{baseUrl}}/mobile/addresses",
-        "description": "POST /mobile/addresses — saves `addressId` for booking serviceAddress text."
+        "description": "POST /mobile/addresses — saves `addressId` for booking serviceAddress text.\n\n**HTTP:** `POST` `201`; `400`."
       }
     },
     {
-      "name": "6. Edit address",
+      "name": "6. Edit address [200]",
       "event": [
         {
           "listen": "test",
@@ -177,19 +235,25 @@
       "request": {
         "method": "PUT",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"label\": \"Home\",\n  \"line1\": \"100 Updated Test Street\",\n  \"city\": \"Bengaluru\",\n  \"state\": \"KA\",\n  \"zipCode\": \"560001\",\n  \"country\": \"India\"\n}"
         },
         "url": "{{baseUrl}}/mobile/addresses/{{addressId}}",
-        "description": "PUT /mobile/addresses/{id}"
+        "description": "PUT /mobile/addresses/{id}\n\n**HTTP:** `PUT` `200`; `400`; `404` not found."
       }
     },
     {
-      "name": "7. Add second address (for delete demo)",
+      "name": "7. Add second address [201]",
       "event": [
         {
           "listen": "test",
@@ -206,19 +270,25 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"label\": \"Office\",\n  \"line1\": \"200 Office Road\",\n  \"city\": \"Bengaluru\",\n  \"zipCode\": \"560002\",\n  \"country\": \"India\",\n  \"isDefault\": false\n}"
         },
         "url": "{{baseUrl}}/mobile/addresses",
-        "description": "POST /mobile/addresses — second row; `addressId2` used for delete."
+        "description": "POST /mobile/addresses — second row; `addressId2` used for delete.\n\n**HTTP:** `POST` `201`; `400`."
       }
     },
     {
-      "name": "8. Delete second address",
+      "name": "8. Delete second address [204]",
       "event": [
         {
           "listen": "test",
@@ -235,14 +305,17 @@
       "request": {
         "method": "DELETE",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/addresses/{{addressId2}}",
-        "description": "DELETE /mobile/addresses/{id} — removes the office row; default home remains."
+        "description": "DELETE /mobile/addresses/{id} — removes the office row; default home remains.\n\n**HTTP:** `DELETE` `204` empty body; `404`; `401`."
       }
     },
     {
-      "name": "9. Fetch categories (home)",
+      "name": "9. Fetch categories (home) [200]",
       "event": [
         {
           "listen": "test",
@@ -268,14 +341,17 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/home",
-        "description": "GET /mobile/home — categories + services; sets `categoryId`, `serviceId1`, `serviceId2`."
+        "description": "GET /mobile/home — categories + services; sets `categoryId`, `serviceId1`, `serviceId2`.\n\n**HTTP:** `200` categories list."
       }
     },
     {
-      "name": "10. Fetch subcategories",
+      "name": "10. Fetch subcategories [200]",
       "event": [
         {
           "listen": "test",
@@ -296,14 +372,17 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/catalog/subcategories?categoryId={{categoryId}}",
-        "description": "GET /mobile/catalog/subcategories?categoryId= — requires **numeric** categoryId. Legacy home uses string ids → 400 (expected)."
+        "description": "GET /mobile/catalog/subcategories?categoryId= — requires **numeric** categoryId. Legacy home uses string ids → 400 (expected).\n\n**HTTP:** `200` array; `400` missing/invalid `categoryId` (numeric required)."
       }
     },
     {
-      "name": "11. Add cart item A (voice + video + image URLs)",
+      "name": "11. Add cart item A [200]",
       "event": [
         {
           "listen": "prerequest",
@@ -335,19 +414,25 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"serviceId\": {{serviceId1}},\n  \"quantity\": 1,\n  \"notes\": \"Cart line A notes\",\n  \"voiceNoteUrl\": \"https://example.com/voice-a.m4a\",\n  \"videoUrl\": \"https://example.com/video-a.mp4\",\n  \"imageUrl\": \"https://example.com/image-a.jpg\"\n}"
         },
         "url": "{{baseUrl}}/mobile/cart/items",
-        "description": "POST /mobile/cart/items — replace `serviceId` if variables empty (set manually from home)."
+        "description": "POST /mobile/cart/items — replace `serviceId` if variables empty (set manually from home).\n\n**HTTP:** `200` line saved; `400`; `404` service; `501` no `cart_items` table; `500` rare."
       }
     },
     {
-      "name": "12. Add cart item B (different service)",
+      "name": "12. Add cart item B [200]",
       "event": [
         {
           "listen": "prerequest",
@@ -377,19 +462,25 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"serviceId\": {{serviceId2}},\n  \"quantity\": 2,\n  \"notes\": \"Cart line B\",\n  \"voiceNoteUrl\": \"https://example.com/voice-b.m4a\",\n  \"videoUrl\": \"https://example.com/video-b.mp4\",\n  \"imageUrl\": \"https://example.com/image-b.jpg\"\n}"
         },
         "url": "{{baseUrl}}/mobile/cart/items",
-        "description": "If only one service exists, `serviceId2` equals `serviceId1` — upserts same line (quantity 2)."
+        "description": "If only one service exists, `serviceId2` equals `serviceId1` — upserts same line (quantity 2).\n\n**HTTP:** `200` line saved; `400`; `404` service; `501` no `cart_items` table; `500` rare."
       }
     },
     {
-      "name": "13. Check cart (subtotal + lines)",
+      "name": "13. Check cart [200]",
       "event": [
         {
           "listen": "test",
@@ -410,14 +501,17 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/cart",
-        "description": "GET /mobile/cart — items, itemCount, subtotal."
+        "description": "GET /mobile/cart — items, itemCount, subtotal.\n\n**HTTP:** `200` items + subtotal; `401`; `501` table missing."
       }
     },
     {
-      "name": "14. Fetch cart items (same endpoint)",
+      "name": "14. Fetch cart [200]",
       "event": [
         {
           "listen": "test",
@@ -441,14 +535,17 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/cart",
-        "description": "GET /mobile/cart again — confirm per-line voice/video/image in response."
+        "description": "GET /mobile/cart again — confirm per-line voice/video/image in response.\n\n**HTTP:** `200` items + subtotal; `401`; `501` table missing."
       }
     },
     {
-      "name": "15. Create booking from cart",
+      "name": "15. Create booking from cart [201]",
       "event": [
         {
           "listen": "prerequest",
@@ -476,19 +573,25 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"serviceAddress\": \"100 Updated Test Street, Bengaluru, KA 560001\",\n  \"fromCart\": true,\n  \"description\": \"Booking from cart roundtrip\",\n  \"customerNotes\": \"Thanks!\"\n}"
         },
         "url": "{{baseUrl}}/mobile/bookings",
-        "description": "POST /mobile/bookings — `fromCart: true` loads cart lines, creates booking_items with quantities/media, clears cart."
+        "description": "POST /mobile/bookings — `fromCart: true` loads cart lines, creates booking_items with quantities/media, clears cart.\n\n**HTTP:** `POST` `201` booking; `GET` `200` list; `400`; `404`; `501` cart if `fromCart`."
       }
     },
     {
-      "name": "16. Get booking by id (booking + items)",
+      "name": "16. Get booking by id [200]",
       "event": [
         {
           "listen": "prerequest",
@@ -517,14 +620,17 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/bookings/{{bookingId}}",
-        "description": "GET /mobile/bookings/{id} — detail with booking line items."
+        "description": "GET /mobile/bookings/{id} — detail with booking line items.\n\n**HTTP:** `200`; `404`; `401`."
       }
     },
     {
-      "name": "17. List bookings",
+      "name": "17. List bookings [200]",
       "event": [
         {
           "listen": "test",
@@ -541,10 +647,13 @@
       "request": {
         "method": "GET",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{mobileAccessToken}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{mobileAccessToken}}"
+          }
         ],
         "url": "{{baseUrl}}/mobile/bookings?page=1&limit=20",
-        "description": "GET /mobile/bookings — paginated list."
+        "description": "GET /mobile/bookings — paginated list.\n\n**HTTP:** `GET` `200`; `401`."
       }
     }
   ]

@@ -1,0 +1,530 @@
+{
+  "generated_by": "scripts/api_sanity_probe.py",
+  "probe": "GET-only; db.session.rollback() after each request",
+  "get_results": [
+    {
+      "method": "GET",
+      "path": "/",
+      "status": 200,
+      "endpoint": "graphql.health_check"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets",
+      "status": 200,
+      "endpoint": "rest_api.list_assets"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets/1",
+      "status": 404,
+      "endpoint": "rest_api.get_asset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "status": 401,
+      "endpoint": "web_auth.me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/catalog/subcategories",
+      "status": 400,
+      "endpoint": "rest_api.catalog_subcategories"
+    },
+    {
+      "method": "GET",
+      "path": "/api/customers",
+      "status": 200,
+      "endpoint": "rest_api.list_customers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/customers/1",
+      "status": 404,
+      "endpoint": "rest_api.get_customer"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/stats",
+      "status": 500,
+      "endpoint": "rest_api.dashboard_stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/docs",
+      "status": 200,
+      "endpoint": "rest_api.swagger_ui"
+    },
+    {
+      "method": "GET",
+      "path": "/api/enumerations/service-categories",
+      "status": 200,
+      "endpoint": "rest_api.enum_service_categories"
+    },
+    {
+      "method": "GET",
+      "path": "/api/enumerations/specializations",
+      "status": 200,
+      "endpoint": "rest_api.enum_specializations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/enumerations/time-slots",
+      "status": 200,
+      "endpoint": "rest_api.enum_time_slots"
+    },
+    {
+      "method": "GET",
+      "path": "/api/enumerations/zip-codes",
+      "status": 200,
+      "endpoint": "rest_api.enum_zip_codes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/openapi.yaml",
+      "status": 200,
+      "endpoint": "rest_api.serve_openapi_yaml"
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders",
+      "status": 200,
+      "endpoint": "rest_api.list_orders"
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/1",
+      "status": 404,
+      "endpoint": "rest_api.get_order"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payments",
+      "status": 200,
+      "endpoint": "rest_api.payments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payments/1",
+      "status": 404,
+      "endpoint": "rest_api.payment_by_id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payments/payouts",
+      "status": 200,
+      "endpoint": "rest_api.payouts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payments/refunds",
+      "status": 200,
+      "endpoint": "rest_api.refunds"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reviews",
+      "status": 200,
+      "endpoint": "rest_api.list_reviews"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reviews/1",
+      "status": 404,
+      "endpoint": "rest_api.get_review"
+    },
+    {
+      "method": "GET",
+      "path": "/api/services",
+      "status": 200,
+      "endpoint": "rest_api.list_services"
+    },
+    {
+      "method": "GET",
+      "path": "/api/services/1",
+      "status": 200,
+      "endpoint": "rest_api.get_service"
+    },
+    {
+      "method": "GET",
+      "path": "/api/services/addons",
+      "status": 200,
+      "endpoint": "rest_api.service_addons"
+    },
+    {
+      "method": "GET",
+      "path": "/api/services/categories",
+      "status": 200,
+      "endpoint": "rest_api.service_categories"
+    },
+    {
+      "method": "GET",
+      "path": "/api/services/packages",
+      "status": 200,
+      "endpoint": "rest_api.service_packages"
+    },
+    {
+      "method": "GET",
+      "path": "/api/services/warranties",
+      "status": 200,
+      "endpoint": "rest_api.service_warranties"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/roles",
+      "status": 200,
+      "endpoint": "rest_api.settings_roles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/subscriptions/amc",
+      "status": 200,
+      "endpoint": "rest_api.amc_plans"
+    },
+    {
+      "method": "GET",
+      "path": "/api/subscriptions/plans",
+      "status": 200,
+      "endpoint": "rest_api.subscription_plans"
+    },
+    {
+      "method": "GET",
+      "path": "/api/subscriptions/user",
+      "status": 200,
+      "endpoint": "rest_api.user_subscriptions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/subscriptions/user-amc",
+      "status": 200,
+      "endpoint": "rest_api.user_amc"
+    },
+    {
+      "method": "GET",
+      "path": "/api/technicians",
+      "status": 200,
+      "endpoint": "rest_api.list_technicians"
+    },
+    {
+      "method": "GET",
+      "path": "/api/technicians/1",
+      "status": 200,
+      "endpoint": "rest_api.get_technician"
+    },
+    {
+      "method": "GET",
+      "path": "/graphql",
+      "status": 200,
+      "endpoint": "graphql.graphql_view"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/addresses",
+      "status": 401,
+      "endpoint": "mobile_api.list_addresses"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/bookings",
+      "status": 401,
+      "endpoint": "mobile_api.list_mobile_bookings"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/bookings/1",
+      "status": 401,
+      "endpoint": "mobile_api.get_mobile_booking"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/cart",
+      "status": 401,
+      "endpoint": "mobile_api.get_cart"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/catalog/subcategories",
+      "status": 400,
+      "endpoint": "mobile_api.mobile_catalog_subcategories"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/home",
+      "status": 200,
+      "endpoint": "mobile_api.mobile_home"
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/profile",
+      "status": 401,
+      "endpoint": "mobile_api.get_profile"
+    },
+    {
+      "method": "GET",
+      "path": "/openapi.json",
+      "status": 200,
+      "endpoint": "serve_openapi_json"
+    }
+  ],
+  "mutating_routes_not_probed": [
+    {
+      "method": "POST",
+      "path": "/api/addresses",
+      "endpoint": "rest_api.batch_create_address_rows",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/addresses",
+      "endpoint": "rest_api.batch_update_address_rows",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/addresses/1",
+      "endpoint": "rest_api.update_address_row",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/assets",
+      "endpoint": "rest_api.create_asset",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/assets/1",
+      "endpoint": "rest_api.delete_asset",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/assets/1",
+      "endpoint": "rest_api.update_asset",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "endpoint": "web_auth.login",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register",
+      "endpoint": "web_auth.register",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/catalog/categories/1",
+      "endpoint": "rest_api.update_category",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/catalog/subcategories/1",
+      "endpoint": "rest_api.update_sub_category",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/customers",
+      "endpoint": "rest_api.create_customer",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/customers/1",
+      "endpoint": "rest_api.delete_customer",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/customers/1",
+      "endpoint": "rest_api.update_customer",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders",
+      "endpoint": "rest_api.create_order",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/orders/1",
+      "endpoint": "rest_api.delete_order",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/orders/1",
+      "endpoint": "rest_api.update_order",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/assign/1",
+      "endpoint": "rest_api.assign_order",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/escalate/1",
+      "endpoint": "rest_api.escalate_order",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/payments/refunds/1",
+      "endpoint": "rest_api.process_refund",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/reviews",
+      "endpoint": "rest_api.create_review",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/reviews/1",
+      "endpoint": "rest_api.delete_review",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/reviews/1",
+      "endpoint": "rest_api.update_review",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/services",
+      "endpoint": "rest_api.create_service",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/services/1",
+      "endpoint": "rest_api.delete_service",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/services/1",
+      "endpoint": "rest_api.update_service",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/subscriptions/plans",
+      "endpoint": "rest_api.create_subscription_plan",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/subscriptions/plans/1",
+      "endpoint": "rest_api.update_subscription_plan",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/technicians",
+      "endpoint": "rest_api.create_technician",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/technicians/1",
+      "endpoint": "rest_api.delete_technician",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/technicians/1",
+      "endpoint": "rest_api.update_technician",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/addresses",
+      "endpoint": "mobile_api.create_address",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/mobile/addresses",
+      "endpoint": "mobile_api.batch_update_addresses",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/mobile/addresses/1",
+      "endpoint": "mobile_api.delete_address",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/mobile/addresses/1",
+      "endpoint": "mobile_api.update_address",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/auth/request-otp",
+      "endpoint": "mobile_api.request_otp",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/auth/verify-otp",
+      "endpoint": "mobile_api.verify_otp",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/bookings",
+      "endpoint": "mobile_api.create_mobile_booking",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/mobile/cart",
+      "endpoint": "mobile_api.clear_cart_endpoint",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/cart/items",
+      "endpoint": "mobile_api.add_or_update_cart_item",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/mobile/cart/items/1",
+      "endpoint": "mobile_api.delete_cart_item",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PUT",
+      "path": "/mobile/cart/items/1",
+      "endpoint": "mobile_api.update_cart_item",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/mobile/profile",
+      "endpoint": "mobile_api.patch_profile",
+      "note": "not probed (mutating / use integration test)"
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/uploads/presign",
+      "endpoint": "mobile_api.presign_s3_upload",
+      "note": "not probed (mutating / use integration test)"
+    }
+  ]
+}
