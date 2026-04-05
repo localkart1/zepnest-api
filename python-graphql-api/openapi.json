@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Zepnest API (Web + Mobile)",
-    "description": "JSON REST API under `/api` for the admin portal (customers, technicians, orders, services, catalog, subscriptions, payments).\n**Web auth (email/password):** `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me` (JWT `typ: web_user`).\nGraphQL remains at `/graphql` (not included in this document).\n\n\n**Mobile** routes are under `/mobile` (JWT Bearer after verify-otp). GraphQL at `/graphql` is not included.",
+    "description": "JSON REST API under `/api` for the admin portal (customers, technicians, orders, services, catalog, subscriptions, payments).\n\n**Web auth (email/password):** ``POST /api/auth/register``, ``POST /api/auth/login``, ``GET /api/auth/me`` — JWT with ``typ: web_user``; use header ``Authorization: Bearer <accessToken>`` for ``/me``.\n\nGraphQL remains at `/graphql` (not included in this document).\n\n\n**Mobile** routes are under `/mobile` (JWT Bearer after verify-otp). GraphQL at `/graphql` is not included.",
     "version": "1.0.0"
   },
   "servers": [
@@ -80,55 +80,85 @@
   "paths": {
     "/api/auth/register": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Register with email and password (web)",
-        "description": "Stores a Werkzeug hash in `users.password_hash`. Set `role` (or `userType`) to `customer`, `technician`, or `admin` — stored as `users.user_type` (default `customer`). Technicians also get a `technician_profiles` row. Email is normalized to lowercase. Allowed roles can be restricted with env `WEB_REGISTER_ALLOWED_ROLES` (comma-separated).",
+        "description": "Stores a Werkzeug hash in ``users.password_hash``. Send ``role`` (or ``userType``): ``customer``,\n``technician``, or ``admin`` — stored as ``users.user_type`` (default ``customer``). Technicians\nalso get a ``technician_profiles`` row. Allowed roles can be restricted with env\n``WEB_REGISTER_ALLOWED_ROLES`` (comma-separated). Email is normalized to lowercase.\n",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["email", "password"],
+                "required": [
+                  "email",
+                  "password"
+                ],
                 "properties": {
-                  "email": { "type": "string", "format": "email" },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
                   "password": {
                     "type": "string",
                     "minLength": 8,
                     "description": "Plain text; stored hashed"
                   },
-                  "firstName": { "type": "string" },
-                  "lastName": { "type": "string" },
-                  "phone": { "type": "string" },
+                  "firstName": {
+                    "type": "string"
+                  },
+                  "lastName": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
                   "role": {
                     "type": "string",
-                    "enum": ["customer", "technician", "admin"],
-                    "default": "customer",
-                    "description": "Alias: `userType` or `user_type`"
+                    "enum": [
+                      "customer",
+                      "technician",
+                      "admin"
+                    ],
+                    "default": "customer"
                   },
                   "userType": {
                     "type": "string",
-                    "enum": ["customer", "technician", "admin"]
+                    "enum": [
+                      "customer",
+                      "technician",
+                      "admin"
+                    ]
                   },
                   "specialization": {
-                    "oneOf": [
-                      { "type": "string" },
-                      { "type": "array", "items": { "type": "string" } }
-                    ],
-                    "description": "When role is technician"
+                    "type": "string",
+                    "description": "Technician; string or use array in JSON clients"
                   },
-                  "experience": { "type": "integer", "description": "Alias: experienceYears" },
-                  "experienceYears": { "type": "integer" },
-                  "bio": { "type": "string" },
-                  "hourlyRate": { "type": "number" },
-                  "certification": { "type": "string" },
+                  "experience": {
+                    "type": "integer"
+                  },
+                  "experienceYears": {
+                    "type": "integer"
+                  },
+                  "bio": {
+                    "type": "string"
+                  },
+                  "hourlyRate": {
+                    "type": "number"
+                  },
+                  "certification": {
+                    "type": "string"
+                  },
                   "certifications": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "status": {
                     "type": "string",
-                    "description": "Technician profile status (e.g. available)"
+                    "description": "Technician profile status"
                   }
                 }
               }
@@ -140,19 +170,29 @@
             "description": "Created; JWT returned",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/WebAuthSuccess" }
+                "schema": {
+                  "$ref": "#/components/schemas/WebAuthSuccess"
+                }
               }
             }
           },
-          "400": { "description": "Validation error" },
-          "403": { "description": "Role not allowed (WEB_REGISTER_ALLOWED_ROLES)" },
-          "409": { "description": "Email already registered" }
+          "400": {
+            "description": "Validation error"
+          },
+          "403": {
+            "description": "Role not allowed (WEB_REGISTER_ALLOWED_ROLES)"
+          },
+          "409": {
+            "description": "Email already registered"
+          }
         }
       }
     },
     "/api/auth/login": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Login with email and password (web)",
         "requestBody": {
           "required": true,
@@ -160,10 +200,18 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["email", "password"],
+                "required": [
+                  "email",
+                  "password"
+                ],
                 "properties": {
-                  "email": { "type": "string", "format": "email" },
-                  "password": { "type": "string" }
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -174,21 +222,33 @@
             "description": "JWT issued",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/WebAuthSuccess" }
+                "schema": {
+                  "$ref": "#/components/schemas/WebAuthSuccess"
+                }
               }
             }
           },
-          "400": { "description": "Missing fields" },
-          "401": { "description": "Invalid credentials or inactive user" }
+          "400": {
+            "description": "Missing fields"
+          },
+          "401": {
+            "description": "Invalid credentials or inactive user"
+          }
         }
       }
     },
     "/api/auth/me": {
       "get": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Current user (web JWT)",
-        "description": "Use **Authorize** with the `accessToken` from `/api/auth/login` or `/api/auth/register`. Token payload includes `typ: web_user` (not the same as mobile OTP JWTs).",
-        "security": [{ "bearerAuth": [] }],
+        "description": "Use **Authorize** with the ``accessToken`` from ``/api/auth/login`` or ``/api/auth/register``.\nToken payload includes ``typ: web_user`` (not the same as mobile OTP JWTs).\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "User profile",
@@ -197,13 +257,17 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "user": { "$ref": "#/components/schemas/WebAuthUser" }
+                    "user": {
+                      "$ref": "#/components/schemas/WebAuthUser"
+                    }
                   }
                 }
               }
             }
           },
-          "401": { "description": "Missing or invalid token" }
+          "401": {
+            "description": "Missing or invalid token"
+          }
         }
       }
     },
@@ -313,7 +377,7 @@
         },
         "responses": {
           "201": {
-            "description": "Created; same shape as GET /api/customers/{customer_id} (includes persisted addresses).",
+            "description": "Created; same shape as GET /api/customers/{customer_id}",
             "content": {
               "application/json": {
                 "schema": {
@@ -326,16 +390,11 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "409": {
-            "description": "A customer with this email or phone already exists",
+            "description": "Duplicate email or phone",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "message": {
-                      "type": "string"
-                    }
-                  }
+                  "$ref": "#/components/schemas/ErrorMessage"
                 }
               }
             }
@@ -380,7 +439,7 @@
           "Customers"
         ],
         "summary": "Update customer",
-        "description": "Partial update: only keys present in the body are applied. If `addresses` is sent, it replaces all addresses for the customer (send `[]` to clear). Requires `users.internal_notes` column — run scripts/add_users_internal_notes.sql if missing.",
+        "description": "Partial update. If `addresses` is present, it replaces all addresses (use `[]` to clear). Run scripts/add_users_internal_notes.sql if internal_notes column is missing.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -409,12 +468,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "message": {
-                      "type": "string"
-                    }
-                  }
+                  "$ref": "#/components/schemas/ErrorMessage"
                 }
               }
             }
@@ -2080,6 +2134,14 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT in `Authorization: Bearer <token>`. **Mobile:** `accessToken` from `POST /mobile/auth/verify-otp` (`typ: mobile_customer`). **Web:** `accessToken` from `POST /api/auth/login` or `/api/auth/register` (`typ: web_user`)."
+      }
+    },
     "parameters": {
       "Page": {
         "name": "page",
@@ -2138,14 +2200,22 @@
             "type": "integer",
             "description": "users.user_id"
           },
-          "email": { "type": "string" },
-          "firstName": { "type": "string" },
-          "lastName": { "type": "string" },
+          "email": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
           "role": {
             "type": "string",
             "description": "Alias of userType for web frontend compatibility"
           },
-          "userType": { "type": "string" }
+          "userType": {
+            "type": "string"
+          }
         }
       },
       "WebAuthSuccess": {
@@ -2155,8 +2225,12 @@
             "type": "string",
             "description": "JWT; typ web_user"
           },
-          "expiresInHours": { "type": "integer" },
-          "user": { "$ref": "#/components/schemas/WebAuthUser" }
+          "expiresInHours": {
+            "type": "integer"
+          },
+          "user": {
+            "$ref": "#/components/schemas/WebAuthUser"
+          }
         }
       },
       "OrderCreate": {
@@ -2343,22 +2417,19 @@
       },
       "CustomerCreateAddress": {
         "type": "object",
-        "description": "Admin-portal address shape. line1 / addressLine1 take precedence; otherwise line1 is built from doorNo, street, and landmark.",
+        "description": "Admin-style address; line1/addressLine1 or doorNo+street+landmark.",
         "properties": {
           "id": {
-            "type": "string",
-            "description": "Client-only temp id; ignored by the server."
+            "type": "string"
           },
           "fullName": {
             "type": "string"
           },
           "nickName": {
-            "type": "string",
-            "description": "Used as the address label when set."
+            "type": "string"
           },
           "phone": {
-            "type": "string",
-            "description": "If line2 is empty, stored as line2."
+            "type": "string"
           },
           "doorNo": {
             "type": "string"
@@ -2385,8 +2456,7 @@
             "type": "string"
           },
           "isPrimary": {
-            "type": "boolean",
-            "description": "Maps to is_default; isDefault is an alias."
+            "type": "boolean"
           },
           "isDefault": {
             "type": "boolean"
@@ -2416,7 +2486,7 @@
       },
       "CustomerCreate": {
         "type": "object",
-        "description": "At least one of email or phone (non-empty after trim) is required.",
+        "description": "At least one of email or phone (non-empty) is required.",
         "properties": {
           "email": {
             "type": "string"
@@ -2439,8 +2509,7 @@
             "default": "active"
           },
           "internalNotes": {
-            "type": "string",
-            "description": "Stored in users.internal_notes (run scripts/add_users_internal_notes.sql if the column is missing)."
+            "type": "string"
           },
           "addresses": {
             "type": "array",
@@ -2452,7 +2521,7 @@
       },
       "CustomerUpdate": {
         "type": "object",
-        "description": "Partial update. Include `addresses` only when replacing the full address list.",
+        "description": "Partial update; `addresses` replaces the full list when sent.",
         "properties": {
           "email": {
             "type": "string"
@@ -2474,8 +2543,7 @@
             ]
           },
           "internalNotes": {
-            "type": "string",
-            "description": "Stored in users.internal_notes."
+            "type": "string"
           },
           "addresses": {
             "type": "array",
@@ -2587,14 +2655,6 @@
             "type": "string"
           }
         }
-      }
-    },
-    "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT",
-        "description": "JWT in `Authorization: Bearer <token>`. **Mobile:** `accessToken` from `POST /mobile/auth/verify-otp` (`typ: mobile_customer`). **Web:** `accessToken` from `POST /api/auth/login` or `/api/auth/register` (`typ: web_user`)."
       }
     }
   }

@@ -1,0 +1,47 @@
+# CI for python-graphql-api (Flask + GraphQL). Repo root is zepnest-api; app lives in python-graphql-api/.
+name: Python GraphQL API CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "python-graphql-api/**"
+      - ".github/workflows/python-graphql-api-ci.yml"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "python-graphql-api/**"
+      - ".github/workflows/python-graphql-api-ci.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: python-graphql-api
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python-graphql-api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Byte-compile Python sources
+        run: python -m compileall -q api main.py scripts
+
+      - name: Build OpenAPI JSON (merge web + mobile)
+        run: python scripts/build_openapi_json.py
+
+      - name: Smoke test app factory (SQLite)
+        env:
+          DATABASE_URL: sqlite:////tmp/zepnest_ci.db
+          SECRET_KEY: ci-not-secret
+          AUTO_CREATE_TABLES: "true"
+        run: python -c "from api import create_app; create_app()"
